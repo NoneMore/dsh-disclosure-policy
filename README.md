@@ -1,106 +1,117 @@
-# dsh-todo-checkpoint-guard
+# dsh-disclosure-policy
 
-Experimental DeepSeek Harness plugin for two failure modes that show up in long autonomous turns:
+Experimental DeepSeek Harness **host-only** plugin for one failure mode: during a long autonomous turn, the model works for a long time without saying anything the supervisor can act on.
 
-1. **task accounting goes stale** — `todo_write` is created near the start, then not maintained until the end;
-2. **human-facing progress goes silent** — DSH can render mid-turn Assistant messages, but a model may run many tools without producing a substantive visible update.
+The plugin supports the human's job during execution — **supervision** — rather than compelling the model:
+
+- a **standing policy** tells the model to keep working autonomously and to disclose briefly when there is material new information;
+- a **single soft reminder** nudges the model once when a silence interval has produced enough tool calls.
+
+Disclosure is model-authored and best-effort. The plugin never denies a tool call, never rewrites task state, and never forces another step. See [`docs/adr/0001-supervision-over-enforcement.md`](docs/adr/0001-supervision-over-enforcement.md) and [`docs/adr/0003-model-authored-disclosure.md`](docs/adr/0003-model-authored-disclosure.md).
 
 Target baseline: **DeepSeek Harness 0.1.5-rc.2**. This checkout ships prebuilt `lib/` JavaScript so it can be installed without compiling TypeScript first.
 
-> Research snapshot: 2026-09-16. See [`docs/SOURCES.md`](docs/SOURCES.md) for the claim-by-claim source audit, [`docs/PRACTICES.md`](docs/PRACTICES.md) for DSH implementation/UX practices, and [`docs/CODEX-PRACTICES.md`](docs/CODEX-PRACTICES.md) for a deeper source-backed comparison of Codex commentary, planning, async interaction, final-answer, and control patterns.
+> v0.3.0 replaces the v0.2.x `dsh-todo-checkpoint-guard` policy. The package, the patch row, and the plugin id are now `dsh-disclosure-policy` / `disclosure-policy`; TODO freshness and tool-call denial are out of scope. The repository directory name is unchanged.
 
-## What v0.2.x adds
+## What the standing policy says
 
-### Lane A — TODO freshness
+One static system-prompt section is installed at order `10150` (after the first-party Web-surface guidance at `10100`, before the deployment persona suffix at `10200`). It asks the model to disclose **briefly** when there is material new information, especially after:
 
-After a live `todo/write` contains unfinished items:
+- confirming a finding;
+- completing a meaningful phase;
+- changing the settled plan or departing from a settled constraint;
+- obtaining a verification result;
+- encountering a blocker or material uncertainty; or
+- preparing to enter a clearly long stretch of work.
 
-- ordinary tool calls consume a TODO freshness budget;
-- at `reminderAfterCalls` (default **6**) a model-facing reminder asks for a truthful whole-list reconciliation;
-- after `blockAfterCalls` (default **10**), the next ordinary tool call is denied until `todo_write` runs;
-- at `agent/turn-stopping`, unfinished items trigger at most one extra reconciliation step before the turn can close.
+A useful disclosure answers only what is relevant:
 
-`todo_write` itself is never blocked. The plugin never silently marks a task complete.
+1. What is now confirmed?
+2. Did this change the settled plan or the settled constraints?
+3. What happens next, and is there anything worth the supervisor's intervention?
 
-### Lane B — communication freshness
+No opening preamble is required. The model asks the user a question only when the execution brief does not let it continue, and it never exposes private chain-of-thought.
 
-At each turn start, the plugin independently tracks ordinary tool calls since the latest **substantive user-visible Assistant text**:
+The section is static: it carries no live counters and no per-turn state, so it cannot invalidate the cached prompt prefix.
 
-- at `progressReminderAfterCalls` (default **8**) it injects a soft progress checkpoint;
-- after `progressBlockAfterCalls` (default **12**), the next ordinary tool call is denied until the model emits a substantive visible mid-turn update;
-- by default, a permanent system-prompt section asks the model to report meaningful phase completion, discoveries, plan changes, verification results, blockers, and the next action — while avoiding empty “still working” chatter and chain-of-thought.
+## What the soft reminder does
 
-The runtime fallback uses `progressMinChars` (default **24 non-whitespace Unicode characters**) only as a crude anti-empty-status heuristic. It is **not** an information-quality score. The semantic obligation lives in the prompt policy.
+The runtime keeps one small state record per `(session, turn)`:
 
-DSH commits `assistant/message` before dispatching tool calls from that assistant message. Therefore a message can satisfy a hard communication checkpoint naturally by emitting concise visible text **and** its next tool call in the same model response; the visible text resets the budget before the tool reaches the guard.
+```text
+completed top-level calls since visible model text
+reminded in this silence interval?
+```
 
-### PTC / Code Mode
+Rules:
 
-Top-level `run_code` is exempt, while nested native tool calls underneath it count. This prevents a single transport call from hiding a large amount of real work. `todo_write` remains reachable even when the communication lane is blocked; however, updating TODO state does not reset the communication budget because task accounting and human narration are intentionally separate lanes.
+- `turn/start` initializes the record; `turn/end` discards it.
+- Any `assistant/message` containing non-whitespace visible `text` resets the call count and opens a new silence interval. Reasoning blocks, tool results, and plugin-authored messages do not reset it.
+- Each **completed top-level** tool call increments the count, whether it succeeded, failed, or was denied by another tool policy. Nested calls inside a composite tool (`exec.parent !== undefined`) do not count separately.
+- When the count first reaches `reminderAfterCalls`, the plugin appends one plugin-sourced notice through `tools/post-execute` → `additionalContexts`, delivered on the next model step.
+- A parallel step produces at most one reminder.
+- The reminder does not reset the count, and a silence interval is reminded at most once. Only a later non-empty visible model message opens a new interval.
+- The notice is `createUserMessage` with `source: { kind: 'plugin', plugin: 'disclosure-policy', form: 'notice', summary }`, and it is prepended to whatever downstream post-execute decisions and contexts already exist.
 
-## Why this uses native mid-turn Assistant messages
+The reminder asks for one or two sentences covering the three questions above. It contains no runtime fact row, no threat of denial, no request for user input, and no chain-of-thought request.
 
-The plugin does **not** synthesize Assistant chat bubbles. DSH already treats `assistant/message` as a durable surface event, and the Web UI explicitly renders/folds earlier Assistant material inside an open/closed Turn. The guard only nudges or blocks until the **model itself** produces visible Assistant text. This keeps the normal transcript, provenance, UI folding, and steering behavior intact.
+## Mechanism mapping
 
-See `docs/DESIGN.md` for event ordering and recovery examples.
+| Purpose | Extension point |
+|---|---|
+| Static disclosure policy | `systemPrompt.section({ order: 10150 })` |
+| Turn and visible-text observation | `session/event` live projection |
+| Count completed top-level calls and deliver one reminder | `tools/post-execute` → `PostToolDecision.additionalContexts` |
+
+## Configuration
+
+| Option | Default | Meaning |
+|---|---:|---|
+| `reminderAfterCalls` | `8` | Completed top-level calls in one silence interval before the single soft reminder. `0` disables runtime reminders while keeping the standing policy. |
+
+There are no cadence tiers, exempt-tool list, fact-row mode, slow-tool threshold, prose-length threshold, or TODO settings.
+
+A custom config row can look like:
+
+```yaml
+- id: disclosure-policy
+  config:
+    reminderAfterCalls: 12
+```
+
+DSH patch rows replace the `config` value rather than deep-merging it. Both config layers re-fill omitted options from the plugin's hard-coded defaults, so a partial override reverts unlisted options to the defaults rather than to the values in `cordis.patch.yml`.
+
+## What this plugin deliberately does not do
+
+It does not generate disclosure from runtime facts, judge whether model prose is informative, discover or validate the execution brief, monitor or enforce `todo_write` freshness, rewrite task state, register `ctx.tools.guard()`, steer from `agent/turn-stopping` or any `session/event` callback, classify semantic runtime events, carry live state in the system prompt, add custom durable events, or ship a client component.
+
+Native task accounting stays separate from disclosure. Installing this plugin changes nothing about the `todo_write` contract.
 
 ## Install locally
 
 Unzip, then run from the directory containing the checkout:
 
 ```bash
-dsh plugin --profile web add ./dsh-todo-checkpoint-guard-0.2.1
+dsh plugin --profile web add ./dsh-disclosure-policy-0.3.0
 dsh --profile web --dump-config
 dsh --profile web
 ```
 
 Replace `web` with your profile name if needed.
 
-A custom config row can look like:
+## Limitations
 
-```yaml
-- id: todo-checkpoint-guard
-  config:
-    reminderAfterCalls: 8
-    blockAfterCalls: 12
-    progressReminderAfterCalls: 10
-    progressBlockAfterCalls: 16
-    progressMinChars: 24
-    installProgressPolicy: true
-    reconcileOnTurnStop: true
-    exemptTools:
-      - session_search
-```
+- **Best-effort by construction.** A model that ignores both the standing policy and the reminder can stay silent for a whole turn. That is the accepted cost of removing enforcement.
+- **Live projection, not history reconstruction.** Current DSH deprecates synchronous `Session.eventAt()`, `snapshotEvents()`, and `ownEvents()` and prohibits new production calls to them. On hot reload mid-turn, no state exists until the next observed `turn/start`, so accounting restarts at the next turn rather than scanning the log.
+- **Boundaries, not interruptions.** Nothing in DSH can inject text while a single long tool call is running. The reminder can only be attached when a call settles, so it lands on the *next* model step.
+- **Counting is a failsafe, not a semantic trigger.** `reminderAfterCalls` is a crude silence measure. The semantic obligation lives in the standing policy.
+- **The prompt service is optional.** The plugin hard-injects only `tools` and probes `ctx.get('systemPrompt')`. A deployment that installs a complete replacement system prompt may suppress the section; the reminder still works.
+- **No custom durable event types.** Silence state is plugin-local, because out-of-tree durable-event compatibility has sharp edges; see [`docs/SOURCES.md`](docs/SOURCES.md).
+- **Host-only.** No client bundle is shipped, so there is no UI surface for the silence counter.
 
-DSH patch rows replace the `config` value rather than deep-merging it, so include every option you care about when overriding the row. Omitting an option does not preserve this package's value for it: both config layers re-fill every missing option from the plugin's hard-coded defaults, so a partial override silently reverts the rest to the defaults rather than to the values in `cordis.patch.yml`. A partial override can also trip a cross-field rule that the schema itself does not check — `reminderAfterCalls: 10` passes validation on its own, then fails inside `apply` with `blockAfterCalls must be greater than reminderAfterCalls` and mounts nothing.
+## Verification performed for this release
 
-## Configuration
-
-| Option | Default | Meaning |
-|---|---:|---|
-| `reminderAfterCalls` | 6 | Soft TODO reminder threshold |
-| `blockAfterCalls` | 10 | Hard TODO checkpoint threshold |
-| `progressReminderAfterCalls` | 8 | Soft communication reminder threshold |
-| `progressBlockAfterCalls` | 12 | Hard communication checkpoint threshold |
-| `progressMinChars` | 24 | Fallback minimum visible-text length used to reset communication freshness |
-| `installProgressPolicy` | true | Add the Codex-inspired progress communication section when `ctx.systemPrompt` is available |
-| `reconcileOnTurnStop` | true | Allow one bounded TODO reconciliation continuation at turn close |
-| `exemptTools` | `[]` | Native tool names that consume neither budget |
-
-The prompt service is optional by design: the plugin hard-injects only `tools` and probes `ctx.get('systemPrompt')`. If a deployment uses a complete replacement system prompt, external sections may be suppressed by that deployment; the runtime guard still works.
-
-## Important limitations
-
-- **Live projection, not history reconstruction.** Current DSH deprecates synchronous `Session.eventAt()`, `snapshotEvents()`, and `ownEvents()` and prohibits new production calls to them. That is a policy prohibition rather than a removed or type-marked API: all three are still public in `0.1.5-rc.2` and `dsh-session` still calls them internally. On HMR/hot-load mid-turn, communication tracking restarts from the next observed `assistant/message` (substantive or not), and TODO tracking restarts from the next observed `todo/write`. The one-turn reconciliation latch is plugin-local as well, so a hot reload can let the stop-boundary steer fire a second time in the same turn.
-- **Text length is only a fallback heuristic.** A 24-character low-value sentence may still pass. The permanent prompt plus soft reminder is what tries to make updates informative.
-- **Fixed call counts are failsafes, not ideal semantic triggers.** A future version can score meaningful phase transitions, test outcomes, plan changes, or blockers instead of relying mainly on N-call staleness.
-- **Steer is best-effort at step boundaries.** The one turn-stop steer is intentionally at the documented lifecycle boundary. Do not copy it into a synchronous `session/event` listener; current Session append rejects re-entrancy.
-- **No custom durable event types.** v0.2 keeps checkpoint state plugin-local because out-of-tree durable-event compatibility has sharp edges; see `docs/SOURCES.md`.
-- **Host-only.** No client bundle is shipped yet. A later UI plugin could expose “calls since TODO update / calls since progress update” without changing the host policy.
-
-## Verification performed for this zip
-
-The generation environment ran the pure policy tests, Node syntax checks, JSON/YAML sanity checks, and archive validation. It did **not** boot an actual DSH 0.1.5-rc.2 Web profile because the full DSH npm dependency graph was not installed in this environment. Treat the first local DSH boot as the integration test; see `docs/VERIFICATION.md` for exact commands/results.
+`npm run typecheck`, `npm test` (24 tests: 14 pure policy tests plus a 10-test fake-`ctx` runtime harness over the built `lib/`), and Node syntax checks were run in the generation environment. A real DSH profile boot was **not** run; treat the first local boot as the integration test. See [`docs/VERIFICATION.md`](docs/VERIFICATION.md) for exact commands and results.
 
 ## Development
 
@@ -110,4 +121,11 @@ npm run build
 npm test
 ```
 
-The source of truth is `src/`; `lib/` is included for direct local installation. `docs/SOURCES.md` is intentionally part of the package so future edits can distinguish official contracts, community measurements, and external design inspiration. `docs/CODEX-PRACTICES.md` goes deeper on what is portable from Codex and what should *not* be copied blindly.
+The source of truth is `src/`; `lib/` is committed so the plugin can be installed directly from this checkout. `src/policy.ts` is pure and imports nothing from the host, so the complete behavior is testable without the DSH dependency graph; `src/index.ts` only binds those decisions to Cordis extension points.
+
+## Research docs
+
+- [`docs/SOURCES.md`](docs/SOURCES.md) — claim-by-claim source audit (official contracts, community evidence, external comparison).
+- [`docs/HOW-IT-WORKS.md`](docs/HOW-IT-WORKS.md) — implementation walkthrough with installed-tree citations.
+- [`docs/DESIGN.md`](docs/DESIGN.md) — the design of the single silence lane and why the v0.2 enforcement lanes were removed.
+- [`docs/PRACTICES.md`](docs/PRACTICES.md) and [`docs/CODEX-PRACTICES.md`](docs/CODEX-PRACTICES.md) — DSH plugin/UX practices and the Codex comparison.

@@ -1,35 +1,116 @@
-export declare const TODO_WRITE_NAME = "todo_write";
-export interface GuardConfig {
-  reminderAfterCalls: number;
-  blockAfterCalls: number;
-  progressReminderAfterCalls: number;
-  progressBlockAfterCalls: number;
-  progressMinChars: number;
-  installProgressPolicy: boolean;
-  reconcileOnTurnStop: boolean;
-  exemptTools: readonly string[];
+/**
+ * Pure disclosure policy.
+ *
+ * This module deliberately imports nothing from the host so the complete
+ * behavior — silence accounting, reminder arming, and post-execute composition —
+ * can be unit-tested without the DeepSeek Harness dependency graph. `index.ts`
+ * is only the adapter that binds these decisions to Cordis extension points.
+ */
+/** Package/plugin identity carried by every notice this policy emits. */
+export declare const DISCLOSURE_PLUGIN_NAME = "disclosure-policy";
+/**
+ * Static system-prompt order for the standing disclosure policy: after the
+ * first-party Web-surface guidance (`WEB_SURFACE = 10100`) and before the
+ * deployment persona suffix (`DEPLOYMENT_PERSONA_SUFFIX = 10200`).
+ */
+export declare const DISCLOSURE_POLICY_ORDER = 10150;
+/** Prompt-section name; unique within its layer. */
+export declare const DISCLOSURE_POLICY_SECTION_NAME = "plugin:disclosure-policy:policy";
+export interface DisclosureConfig {
+    /**
+     * Completed top-level tool calls in one silence interval before the single
+     * soft reminder. `0` disables runtime reminders while keeping the standing
+     * policy.
+     */
+    reminderAfterCalls: number;
 }
-export declare const DEFAULT_CONFIG: GuardConfig;
-export interface TodoLike { readonly status: string; }
-export interface ContentBlockLike { readonly type: string; readonly text?: unknown; }
-export declare function resolveConfig(input?: Partial<GuardConfig>): GuardConfig;
-export declare function hasUnfinishedTodos(todos: readonly TodoLike[]): boolean;
-export declare function visibleAssistantTextLength(content: readonly ContentBlockLike[]): number;
-export declare function isMeaningfulVisibleAssistant(content: readonly ContentBlockLike[], minChars: number): boolean;
-export declare function shouldCountTool(toolName: string, hasParent: boolean, exemptTools: ReadonlySet<string>, runCodeName?: string): boolean;
-export declare function todoBlockedReason(calls: number, blockAfterCalls: number): string;
-export declare function todoReminderText(calls: number, blockAfterCalls: number): string;
-export declare function progressBlockedReason(calls: number, blockAfterCalls: number, minChars: number): string;
-export declare function progressReminderText(calls: number, blockAfterCalls: number): string;
-export declare function combinedBlockedReason(options: {
-  readonly todoCalls?: number;
-  readonly progressCalls?: number;
-  readonly config: Pick<GuardConfig, 'blockAfterCalls' | 'progressBlockAfterCalls' | 'progressMinChars'>;
-}): string;
-export declare function combinedReminderText(options: {
-  readonly todoCalls?: number;
-  readonly progressCalls?: number;
-  readonly config: Pick<GuardConfig, 'blockAfterCalls' | 'progressBlockAfterCalls'>;
-}): string;
-export declare const PROGRESS_POLICY_TEXT: string;
-export declare const STOP_RECONCILE_TEXT: string;
+export declare const DEFAULT_CONFIG: Readonly<DisclosureConfig>;
+/**
+ * Resolve and validate the single behavioral option. The schema in `index.ts`
+ * already rejects malformed DSH config rows; this second check keeps the pure
+ * module authoritative and fails closed for direct callers.
+ */
+export declare function resolveConfig(input?: Partial<DisclosureConfig>): DisclosureConfig;
+export interface ContentBlockLike {
+    readonly type: string;
+    readonly text?: unknown;
+}
+export interface MessageLike {
+    readonly role?: string;
+    readonly source?: {
+        readonly kind?: string;
+    };
+    readonly content: readonly ContentBlockLike[];
+}
+/**
+ * True when any visible `text` block carries a non-whitespace character.
+ *
+ * Reasoning blocks are not disclosure, and an empty or whitespace-only text
+ * block is not a message the supervisor can read.
+ */
+export declare function hasVisibleText(content: readonly ContentBlockLike[]): boolean;
+/**
+ * True when one committed message opens a new silence interval: assistant text
+ * authored by the routed model. Reasoning-only messages, tool results, and
+ * plugin-authored context never reset the interval.
+ */
+export declare function isModelDisclosure(message: MessageLike): boolean;
+/**
+ * One turn-local silence interval: a run of completed top-level tool calls with
+ * no visible model text since it opened.
+ */
+export interface SilenceState {
+    /** Completed top-level tool calls since the interval opened. */
+    calls: number;
+    /** Whether this interval already received its one reminder. */
+    reminded: boolean;
+}
+/** `turn/start` initializes the interval. */
+export declare function createSilence(): SilenceState;
+/**
+ * Open a new interval in place: visible model text (or a new turn) clears the
+ * call count and re-arms the single reminder, without replacing the record.
+ */
+export declare function resetSilence(state: SilenceState): SilenceState;
+/**
+ * Count one completed top-level call and report whether it carries the
+ * interval's single reminder.
+ *
+ * Nested calls inside a composite tool never count. The reminder does not reset
+ * the count, and a silence interval is reminded at most once, so a parallel step
+ * can produce at most one notice. The result is independent of whether the call
+ * succeeded, failed, or was denied by another policy, because every settled call
+ * reaches the caller exactly once.
+ */
+export declare function countCompletedCall(state: SilenceState, reminderAfterCalls: number, options?: {
+    readonly nested?: boolean;
+}): boolean;
+export interface ReminderCarrier<TNotice> {
+    readonly kind: string;
+    readonly additionalContexts?: readonly TNotice[];
+}
+/**
+ * Compose one reminder into a downstream `tools/post-execute` decision.
+ *
+ * The decision is preserved rather than replaced: its kind and every other
+ * field survive, our notice goes first, and contexts the downstream listener
+ * supplied stay after ours.
+ */
+export declare function withReminder<TNotice, TDecision extends ReminderCarrier<TNotice>>(decision: TDecision, reminder: TNotice): TDecision;
+/**
+ * The standing policy installed at {@link DISCLOSURE_POLICY_ORDER}.
+ *
+ * It states the semantic obligation — when disclosure is worth sending and what
+ * it should answer — and nothing else. It carries no runtime state, no cadence,
+ * and no enforcement.
+ */
+export declare const DISCLOSURE_POLICY_TEXT: string;
+/**
+ * The one soft reminder, delivered as next-step context through
+ * `tools/post-execute`.
+ *
+ * It asks for the same three answers as the standing policy in one or two
+ * sentences. It is purely an instruction: no runtime fact row, no threat of
+ * denial, no request for user input, and no chain-of-thought request.
+ */
+export declare const DISCLOSURE_REMINDER_TEXT: string;

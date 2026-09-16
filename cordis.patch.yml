@@ -1,12 +1,5 @@
 - insert:
-    - id: todo-checkpoint-guard
-      name: dsh-todo-checkpoint-guard
+    - id: disclosure-policy
+      name: dsh-disclosure-policy
       config:
-        reminderAfterCalls: 6
-        blockAfterCalls: 10
-        progressReminderAfterCalls: 8
-        progressBlockAfterCalls: 12
-        progressMinChars: 24
-        installProgressPolicy: true
-        reconcileOnTurnStop: true
-        exemptTools: []
+        reminderAfterCalls: 8

@@ -1,7 +1,7 @@
 {
-  "name": "dsh-todo-checkpoint-guard",
-  "version": "0.2.1",
-  "description": "Keep DeepSeek Harness TODO state fresh and require substantive mid-turn progress updates during long turns.",
+  "name": "dsh-disclosure-policy",
+  "version": "0.3.0",
+  "description": "Ask a DeepSeek Harness model to disclose briefly during long autonomous turns, with at most one soft reminder per silence interval.",
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/index.d.ts",
@@ -71,5 +71,5 @@
     "typescript": "^6.0.0"
   },
   "license": "MIT",
-  "keywords": ["deepseek", "harness", "dsh", "todo", "progress", "checkpoint", "agent", "guard", "cordis"]
+  "keywords": ["deepseek", "harness", "dsh", "disclosure", "supervision", "progress", "agent", "cordis"]
 }

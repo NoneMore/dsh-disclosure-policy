@@ -1,6 +1,6 @@
-dsh-todo-checkpoint-guard is an independent experimental plugin for DeepSeek Harness.
+dsh-disclosure-policy is an independent experimental plugin for DeepSeek Harness.
 It is not an official DeepSeek Harness component and is provided without warranty.
 
 Design references include public DeepSeek Harness documentation and source code,
-and the community dsh-todo-freshness-guard / related discussions. No third-party
-source code is vendored in this package.
+and OpenAI Codex interaction practices as external design comparison. No
+third-party source code is vendored in this package.

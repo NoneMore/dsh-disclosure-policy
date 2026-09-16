@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.3.0
+
+- Renamed the package, patch row, and plugin id to `dsh-disclosure-policy` / `disclosure-policy`. The repository directory is unchanged.
+- Replaced the two enforcement lanes (TODO freshness and communication freshness) with one best-effort disclosure policy: a static prompt section plus at most one soft reminder per silence interval. See ADR-0001 and ADR-0003.
+- Removed `ctx.tools.guard()` entirely: the plugin no longer denies a tool call. Removed the `agent/turn-stopping` reconciliation steer. Removed all TODO reading, counting, and state mutation.
+- Replaced the `6/10` + `8/12` thresholds, `progressMinChars`, `installProgressPolicy`, `reconcileOnTurnStop`, and `exemptTools` options with the single `reminderAfterCalls` option (`8` by default, `0` disables reminders).
+- Counted calls are now **completed top-level** calls observed at `tools/post-execute`, independent of success or another policy's denial. Reasoning-only messages, tool results, and plugin-authored messages no longer reset the interval.
+- Split the implementation into a pure `src/policy.ts` (silence state, message predicate, reminder composition, prompt text) and a thin `src/index.ts` adapter that registers exactly `session/event` and `tools/post-execute`.
+- Added `test/runtime.test.mjs`, a fake-`ctx` harness that exercises the built plugin: threshold reminder, reset semantics, nested-call exclusion, parallel single-notice behavior under out-of-order settling, success/failure/denial-independent counting, `0`-disables behavior, turn disposal, post-execute composition, and the absence of any guard or extra listener.
+- Updated the runtime documentation for v0.3: `README.md`, `docs/DESIGN.md`, `docs/HOW-IT-WORKS.md`, `docs/VERIFICATION.md`, `docs/PRACTICES.md`, and `docs/SOURCES.md`.
+
 ## 0.2.1
 
 - Documentation-focused update; runtime behavior is unchanged from 0.2.0.

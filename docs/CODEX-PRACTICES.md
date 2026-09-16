@@ -256,10 +256,12 @@ Codex planning guidance also contains several maintenance principles that are di
 
 ### DSH adaptation
 
-Keep the plugin's two independent freshness lanes:
+Keep plan state and communication genuinely separate. v0.2 implemented that as two runtime lanes with
+their own counters; v0.3 keeps only the communication lane and leaves task accounting entirely to
+`todo_write`:
 
 ```text
-TODO freshness          → todo_write
+task accounting         → todo_write, owned by a separate concern
 communication freshness → visible assistant message
 ```
 
@@ -483,7 +485,7 @@ Layer 2: structured task state
 Layer 3: freshness fallback
   - tool-count and/or wall-clock silence budget
   - soft reminder first
-  - hard checkpoint later
+  - hard checkpoint later (v0.3 deliberately stops at the reminder)
 
 Layer 4: semantic triggers
   - test result changed
