@@ -1,0 +1,12 @@
+- insert:
+    - id: todo-checkpoint-guard
+      name: dsh-todo-checkpoint-guard
+      config:
+        reminderAfterCalls: 6
+        blockAfterCalls: 10
+        progressReminderAfterCalls: 8
+        progressBlockAfterCalls: 12
+        progressMinChars: 24
+        installProgressPolicy: true
+        reconcileOnTurnStop: true
+        exemptTools: []
