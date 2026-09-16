@@ -47,7 +47,7 @@ Rules:
 
 - `turn/start` initializes the record; `turn/end` discards it.
 - Any `assistant/message` containing non-whitespace visible `text` resets the call count and opens a new silence interval. Reasoning blocks, tool results, and plugin-authored messages do not reset it.
-- Each **completed top-level** tool call increments the count, whether it succeeded, failed, or was denied by another tool policy. Nested calls inside a composite tool (`exec.parent !== undefined`) do not count separately.
+- Each **completed top-level** tool call increments the count, whether it succeeded, failed, was denied by another tool policy, or a downstream post-execute listener threw. If that exception prevents reminder delivery, the reminder stays pending for the next deliverable boundary. Nested calls inside a composite tool (`exec.parent !== undefined`) do not count separately.
 - When the count first reaches `reminderAfterCalls`, the plugin appends one plugin-sourced notice through `tools/post-execute` → `additionalContexts`, delivered on the next model step.
 - A parallel step produces at most one reminder.
 - The reminder does not reset the count, and a silence interval is reminded at most once. Only a later non-empty visible model message opens a new interval.
@@ -111,7 +111,7 @@ Replace `web` with your profile name if needed.
 
 ## Verification performed for this release
 
-`npm run typecheck`, `npm test` (24 tests: 14 pure policy tests plus a 10-test fake-`ctx` runtime harness over the built `lib/`), and Node syntax checks were run in the generation environment. A real DSH profile boot was **not** run; treat the first local boot as the integration test. See [`docs/VERIFICATION.md`](docs/VERIFICATION.md) for exact commands and results.
+`npm run typecheck`, `npm test` (25 tests: 14 pure policy tests plus an 11-test fake-`ctx` runtime harness over the built `lib/`), Node syntax checks, package inspection, and an isolated real Web-profile boot were run in the release-review environment. The profile loaded the packed plugin and listened successfully; an end-to-end model turn that reaches the reminder threshold was not exercised. See [`docs/VERIFICATION.md`](docs/VERIFICATION.md) for exact commands and results.
 
 ## Development
 

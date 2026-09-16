@@ -111,7 +111,22 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
   // The single soft reminder. It composes with downstream post-execute policy
   // (accept or block) rather than replacing it, and it never denies a call.
   ctx.on('tools/post-execute', async (exec, _result, next): Promise<PostToolDecision> => {
-    const downstream = await next()
+    let downstream: PostToolDecision
+    try {
+      downstream = await next()
+    } catch (error) {
+      const state = exec.agent === undefined ? undefined : silences.get(exec.agent.session)
+      if (state !== undefined) {
+        const reminderPending = countCompletedCall(state, config.reminderAfterCalls, {
+          nested: exec.parent !== undefined,
+        })
+        // This boundary has no decision to carry additional context. Preserve a
+        // newly due reminder so the next deliverable boundary can attach it.
+        if (reminderPending) state.reminded = false
+      }
+      throw error
+    }
+
     const state = exec.agent === undefined ? undefined : silences.get(exec.agent.session)
     if (state === undefined) return downstream
 

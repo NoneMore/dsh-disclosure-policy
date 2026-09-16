@@ -149,6 +149,7 @@ test('the standing policy covers the material disclosure moments', () => {
   assert.match(DISCLOSURE_POLICY_TEXT, /obtaining a verification result/)
   assert.match(DISCLOSURE_POLICY_TEXT, /blocker/)
   assert.match(DISCLOSURE_POLICY_TEXT, /long stretch of work/)
+  assert.match(DISCLOSURE_POLICY_TEXT, /do not need an opening preamble/i)
   assert.match(DISCLOSURE_POLICY_TEXT, /question only when/i)
 })
 

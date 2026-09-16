@@ -181,7 +181,7 @@ return withReminder(downstream, notice(DISCLOSURE_REMINDER_TEXT))  // 2/3. compo
 
 ### Every settled top-level call counts
 
-`postExecute()` runs for every dispatch outcome, and the pipeline routes a pre-execute denial back through it: a pre-policy denial materializes `{ kind: 'post-result', exec, result }` (`DSHROOT/dsh-tools/lib/index.js:3127-3139`), which `finalizeScheduledExecution()` then passes to `postExecute()` (`:3241-3243`). So the count is independent of success, failure, or another policy's denial — exactly as specified — without the plugin inspecting the result at all.
+`postExecute()` runs for every dispatch outcome, and the pipeline routes a pre-execute denial back through it: a pre-policy denial materializes `{ kind: 'post-result', exec, result }` (`DSHROOT/dsh-tools/lib/index.js:3127-3139`), which `finalizeScheduledExecution()` then passes to `postExecute()` (`:3241-3243`). So the count is independent of success, failure, or another policy's denial — exactly as specified — without the plugin inspecting the result at all. If a downstream post-execute listener throws, the plugin advances the count before rethrowing; when that boundary makes the reminder due, it re-arms the latch so the next decision that can actually carry `additionalContexts` delivers the reminder.
 
 ### Nested calls do not count
 
@@ -237,7 +237,7 @@ The text itself is a constant: it asks for one or two sentences covering the thr
 
 The section text is a constant. It carries no counters and no timestamps, which is deliberate: the assembled prompt is a `system`-role entry inside `messages`, and a route that reads the latest `system` message appends a full copy whenever the rendering changes, while every other route rewrites node 0 in place. Volatile prompt text invalidates the cached prefix from an early token either way; `.scratch/research/prompt-cache-and-volatile-text.md` traces the mechanism. Per-turn state therefore lives only in appended context.
 
-The section states the semantic obligation in full: the six material moments, the three questions, the no-preamble rule, the question-only-when-blocked rule, and the chain-of-thought prohibition.
+The section states the semantic obligation in full: the six material moments, the three questions, no opening-preamble requirement, the question-only-when-blocked rule, and the chain-of-thought prohibition.
 
 ---
 
@@ -274,7 +274,7 @@ Denied variant: a call denied by another policy still returns through `post-exec
 
 - **No state yet.** Before the first observed `turn/start`, `tools/post-execute` returns the downstream decision untouched. Nothing is counted and nothing is reminded.
 - **No agent on the execution.** `exec.agent` is optional (`DSHROOT/dsh-tools/lib/types/index.d.ts:208`); when it is absent there is no session to key on, so the listener returns untouched.
-- **A downstream listener throws.** `next()` rejects, the error propagates, and the registry materializes a tool error result (`DSHROOT/dsh-tools/lib/index.js:3245-3247`). The plugin counts only after `next()` resolves, so a throwing pipeline does not advance the interval.
+- **A downstream listener throws.** `next()` rejects, the error propagates, and the registry materializes a tool error result (`DSHROOT/dsh-tools/lib/index.js:3245-3247`). The completed top-level call still advances the interval. Because the throwing boundary cannot carry a decision, a newly due reminder stays pending and is attached at the next deliverable boundary.
 - **A downstream listener blocks.** The plugin keeps the `block` arm and prepends its context; a blocked call still counts, because it settled.
 - **`systemPrompt` absent or superseded.** The plugin mounts and reminds normally; only the standing text is missing.
 - **Repeated `turn/start` for the same session.** The record is replaced, which is the intended reset.
@@ -288,7 +288,7 @@ Denied variant: a call denied by another policy still returns through `post-exec
 - **The threshold is a failsafe, not a semantic trigger.** Nothing in DSH exposes "a phase completed" or "a test now passes", so `reminderAfterCalls` measures silence, not meaning. The standing policy carries the meaning.
 - **A reminder can be ignored.** Disclosure is best-effort; the plugin has no way to compel it and does not try (ADR-0003).
 - **No commentary phase exists in this build.** The plugin never claims that a given assistant message is interim or final; it only observes that visible text exists.
-- **No real DSH profile was booted in the generation environment.** Contract-level verification and a fake-`ctx` runtime harness were run; see `docs/VERIFICATION.md`.
+- **The real-profile check covered boot, not a model turn.** An isolated Web profile loaded the packed plugin and listened successfully, but no live model turn was driven through the reminder threshold; see `docs/VERIFICATION.md`.
 
 ---
 
@@ -324,7 +324,7 @@ Denied variant: a call denied by another policy still returns through `post-exec
 npm install --cache ./.npm-cache     # local cache because the default npm cache is outside the sandbox
 npm run typecheck
 npm run build
-npm test                             # 24 tests
+npm test                             # 25 tests
 node --check lib/index.js
 node --check lib/policy.js
 ```

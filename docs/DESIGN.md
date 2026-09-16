@@ -52,6 +52,8 @@ On the call that reaches `reminderAfterCalls`, the running `tools/post-execute` 
 
 The listener composes instead of replacing: it awaits `next()`, keeps whatever decision the downstream policy produced (`accept`, value-replacing `accept`, or `block`), and prepends its own context. This mirrors the shipped first-party `dsh-repeat-tool-reminder` and keeps the plugin compatible with result-transformers such as `dsh-spill-policy`.
 
+If `next()` throws, the completed top-level call still advances the interval and the exception still propagates. A boundary that throws cannot carry `additionalContexts`, so a reminder that becomes due there remains pending and is attached to the next downstream decision that returns normally.
+
 ## Why there is no guard
 
 `ctx.tools.guard()` is a monotonic deny with no allow result. It is the right tool for a hard invariant, and the wrong tool for this one:

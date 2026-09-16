@@ -72,6 +72,7 @@ function createHarness(options = {}) {
       assert.equal(registered.length, 1, 'exactly one post-execute listener')
       return await registered[0](execution, result, async () => {
         if (options.delayMs !== undefined) await new Promise(resolve => setTimeout(resolve, options.delayMs))
+        if (options.downstreamError !== undefined) throw options.downstreamError
         return downstream
       })
     },
@@ -226,6 +227,20 @@ test('failed, denied, and blocked outcomes all still count as completed calls', 
   assert.equal((await harness.postExecute(session, { kind: 'accept' }, {}, { result: denied })).additionalContexts, undefined)
   assert.equal((await harness.postExecute(session, { kind: 'accept' }, {}, { result: succeeded })).additionalContexts, undefined)
   assertNoticeShape(await harness.postExecute(session, { kind: 'block', feedback: [] }, {}, { result: failed }))
+})
+
+test('a throwing downstream policy still counts and defers the reminder until delivery is possible', { skip }, async () => {
+  const harness = createHarness()
+  const session = { id: 'session-throwing-policy' }
+  host.apply(harness.ctx, { reminderAfterCalls: 2 })
+  harness.emit(session, TURN.start(1))
+
+  await assert.rejects(
+    harness.postExecute(session, undefined, {}, { downstreamError: new Error('downstream policy failed') }),
+    /downstream policy failed/,
+  )
+
+  assertNoticeShape(await harness.postExecute(session))
 })
 
 test('a zero threshold keeps the standing policy and stops reminders', { skip }, async () => {
