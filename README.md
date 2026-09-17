@@ -5,13 +5,13 @@ Experimental DeepSeek Harness **host-only** plugin for one failure mode: during 
 The plugin supports the human's job during execution — **supervision** — rather than compelling the model:
 
 - a **standing policy** tells the model to keep working autonomously and to disclose briefly when there is material new information;
-- a **single soft reminder** nudges the model once when a silence interval has produced enough tool calls.
+- a **bounded soft reminder cadence** nudges the model again while a silence interval keeps producing tool calls, up to a fixed budget per interval.
 
-Disclosure is model-authored and best-effort. The plugin never denies a tool call, never rewrites task state, and never forces another step. See [`docs/adr/0001-supervision-over-enforcement.md`](docs/adr/0001-supervision-over-enforcement.md) and [`docs/adr/0003-model-authored-disclosure.md`](docs/adr/0003-model-authored-disclosure.md).
+Disclosure is model-authored and best-effort. The plugin never denies a tool call, never rewrites task state, and never forces another step. See [`docs/adr/0001-supervision-over-enforcement.md`](docs/adr/0001-supervision-over-enforcement.md), [`docs/adr/0003-model-authored-disclosure.md`](docs/adr/0003-model-authored-disclosure.md), and [`docs/adr/0004-bounded-repeat-reminders.md`](docs/adr/0004-bounded-repeat-reminders.md).
 
 Target baseline: **DeepSeek Harness 0.1.5-rc.2**. This checkout ships prebuilt `lib/` JavaScript so it can be installed without compiling TypeScript first.
 
-> v0.3.0 replaces the v0.2.x `dsh-todo-checkpoint-guard` policy. The package, the patch row, and the plugin id are now `dsh-disclosure-policy` / `disclosure-policy`; TODO freshness and tool-call denial are out of scope. The repository directory name is unchanged.
+> v0.3.0 replaced the v0.2.x `dsh-todo-checkpoint-guard` policy. The package, the patch row, and the plugin id are now `dsh-disclosure-policy` / `disclosure-policy`; TODO freshness and tool-call denial are out of scope. The repository directory name is unchanged. v0.4.0 keeps that scope and replaces the one-shot reminder latch with a bounded cadence.
 
 ## What the standing policy says
 
@@ -34,26 +34,28 @@ No opening preamble is required. The model asks the user a question only when th
 
 The section is static: it carries no live counters and no per-turn state, so it cannot invalidate the cached prompt prefix.
 
-## What the soft reminder does
+## What the soft reminders do
 
-The runtime keeps one small state record per `(session, turn)`:
+The runtime keeps one small state record per silence interval:
 
 ```text
 completed top-level calls since visible model text
-reminded in this silence interval?
+call count where the first reminder was delivered
+reminders delivered in this interval
 ```
 
 Rules:
 
 - `turn/start` initializes the record; `turn/end` discards it.
-- Any `assistant/message` containing non-whitespace visible `text` resets the call count and opens a new silence interval. Reasoning blocks, tool results, and plugin-authored messages do not reset it.
-- Each **completed top-level** tool call increments the count, whether it succeeded, failed, was denied by another tool policy, or a downstream post-execute listener threw. If that exception prevents reminder delivery, the reminder stays pending for the next deliverable boundary. Nested calls inside a composite tool (`exec.parent !== undefined`) do not count separately.
-- When the count first reaches `reminderAfterCalls`, the plugin appends one plugin-sourced notice through `tools/post-execute` → `additionalContexts`, delivered on the next model step.
-- A parallel step produces at most one reminder.
-- The reminder does not reset the count, and a silence interval is reminded at most once. Only a later non-empty visible model message opens a new interval.
+- Any `assistant/message` containing non-whitespace visible `text` resets the call count, the first-reminder anchor, and the delivered count, opening a new silence interval. Reasoning blocks, tool results, and plugin-authored messages do not reset it.
+- Each **completed top-level** tool call increments the count, whether it succeeded, failed, was denied by another tool policy, or a downstream post-execute listener threw. If that exception prevents reminder delivery, the call still advances the cadence but does not spend a budget slot, so the reminder stays pending for the next deliverable boundary. Nested calls inside a composite tool (`exec.parent !== undefined`) do not count separately.
+- The first reminder is delivered on the call that reaches `reminderAfterCalls`; each later one is delivered `reminderAfterCalls` calls after that anchor, until `maxReminders` notices have been delivered for the interval. After the budget is spent the interval stays silent until visible model text opens a new one.
+- The plugin appends each notice as one plugin-sourced context through `tools/post-execute` → `additionalContexts`, delivered on the next model step.
+- A parallel step crosses at most one cadence period, so it produces at most one reminder.
+- The reminder never resets the call count, so it keeps measuring the whole interval.
 - The notice is `createUserMessage` with `source: { kind: 'plugin', plugin: 'disclosure-policy', form: 'notice', summary }`, and it is prepended to whatever downstream post-execute decisions and contexts already exist.
 
-The reminder asks for one or two sentences covering the three questions above. It contains no runtime fact row, no threat of denial, no request for user input, and no chain-of-thought request.
+The reminder asks for one or two sentences covering the three questions above. The first reminder in an interval is the bare request; every later one appends one fixed sentence stating that this is a repeat reminder and that no visible disclosure has been sent in this stretch. It never states how many reminders remain, contains no runtime fact row, no threat of denial, no request for user input, and no chain-of-thought request.
 
 ## Mechanism mapping
 
@@ -61,13 +63,14 @@ The reminder asks for one or two sentences covering the three questions above. I
 |---|---|
 | Static disclosure policy | `systemPrompt.section({ order: 10150 })` |
 | Turn and visible-text observation | `session/event` live projection |
-| Count completed top-level calls and deliver one reminder | `tools/post-execute` → `PostToolDecision.additionalContexts` |
+| Count completed top-level calls and deliver the due reminder | `tools/post-execute` → `PostToolDecision.additionalContexts` |
 
 ## Configuration
 
 | Option | Default | Meaning |
 |---|---:|---|
-| `reminderAfterCalls` | `8` | Completed top-level calls in one silence interval before the single soft reminder. `0` disables runtime reminders while keeping the standing policy. |
+| `reminderAfterCalls` | `8` | Completed top-level calls per cadence period: the first reminder lands on this call, and each later one this many calls after it. `0` disables runtime reminders while keeping the standing policy. |
+| `maxReminders` | `3` | Reminder budget for one silence interval. `1` restores the historical one-shot cadence; `0` disables runtime reminders. |
 
 There are no cadence tiers, exempt-tool list, fact-row mode, slow-tool threshold, prose-length threshold, or TODO settings.
 
@@ -77,6 +80,7 @@ A custom config row can look like:
 - id: disclosure-policy
   config:
     reminderAfterCalls: 12
+    maxReminders: 2
 ```
 
 DSH patch rows replace the `config` value rather than deep-merging it. Both config layers re-fill omitted options from the plugin's hard-coded defaults, so a partial override reverts unlisted options to the defaults rather than to the values in `cordis.patch.yml`.
@@ -92,7 +96,7 @@ Native task accounting stays separate from disclosure. Installing this plugin ch
 Unzip, then run from the directory containing the checkout:
 
 ```bash
-dsh plugin --profile web add ./dsh-disclosure-policy-0.3.0
+dsh plugin --profile web add ./dsh-disclosure-policy-0.4.0
 dsh --profile web --dump-config
 dsh --profile web
 ```
@@ -101,7 +105,9 @@ Replace `web` with your profile name if needed.
 
 ## Limitations
 
-- **Best-effort by construction.** A model that ignores both the standing policy and the reminder can stay silent for a whole turn. That is the accepted cost of removing enforcement.
+- **Best-effort by construction.** A model that ignores the standing policy and the whole reminder cadence can stay silent for the rest of a turn. That is the accepted cost of removing enforcement.
+- **The budget is per silence interval, and intervals are turn-local.** `turn/end` discards the state, so a model that keeps opening fresh turns is not covered by the cadence; this is a documented limitation rather than a guarantee.
+- **Visible text is the reset, not disclosure quality.** A one-word acknowledgement resets the interval exactly like a real disclosure. The repeat cadence raises the cost of staying silent, not of answering evasively; the runtime does not score semantics.
 - **Live projection, not history reconstruction.** Current DSH deprecates synchronous `Session.eventAt()`, `snapshotEvents()`, and `ownEvents()` and prohibits new production calls to them. On hot reload mid-turn, no state exists until the next observed `turn/start`, so accounting restarts at the next turn rather than scanning the log.
 - **Boundaries, not interruptions.** Nothing in DSH can inject text while a single long tool call is running. The reminder can only be attached when a call settles, so it lands on the *next* model step.
 - **Counting is a failsafe, not a semantic trigger.** `reminderAfterCalls` is a crude silence measure. The semantic obligation lives in the standing policy.
@@ -111,7 +117,7 @@ Replace `web` with your profile name if needed.
 
 ## Verification performed for this release
 
-`npm run typecheck`, `npm test` (25 tests: 14 pure policy tests plus an 11-test fake-`ctx` runtime harness over the built `lib/`), Node syntax checks, package inspection, and an isolated real Web-profile boot were run in the release-review environment. The profile loaded the packed plugin and listened successfully; an end-to-end model turn that reaches the reminder threshold was not exercised. See [`docs/VERIFICATION.md`](docs/VERIFICATION.md) for exact commands and results.
+`npm run typecheck`, `npm test` (28 tests: 17 pure policy tests plus an 11-test fake-`ctx` runtime harness over the built `lib/`), Node syntax checks, package inspection, and an isolated real Web-profile boot were run in the release-review environment. The profile loaded the packed plugin and listened successfully; an end-to-end model turn that reaches the reminder threshold was not exercised. See [`docs/VERIFICATION.md`](docs/VERIFICATION.md) for exact commands and results.
 
 ## Development
 

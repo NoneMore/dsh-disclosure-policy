@@ -19,7 +19,7 @@ Codex's public prompt uses meaningful work transitions rather than “every N to
 - a standing semantic obligation (“report important phase completion, discovery, plan change, test result, blocker, next action”);
 - a soft N-call reminder.
 
-The numeric threshold is a safety net, not the desired cadence. v0.2 added a third stage — a hard checkpoint that denied the next tool call — and v0.3 removed it: enforcement corrects the model's style, while the actual failure is the supervisor's blindness, and a denial does not cure blindness (ADR-0001).
+The numeric threshold is a safety net, not the desired cadence. v0.2 added a third stage — a hard checkpoint that denied the next tool call — and v0.3 removed it: enforcement corrects the model's style, while the actual failure is the supervisor's blindness, and a denial does not cure blindness (ADR-0001). v0.4 also replaced the one-shot reminder latch with a bounded cadence: a single ignored reminder left the rest of the interval silent, which is the one situation the reminder exists for. The safety net now repeats up to `maxReminders` times, and after that it still stops — repeating a nudge indefinitely is how a liveness check turns into noise (§9).
 
 ## 3. Prefer native Assistant output over synthetic chat UI
 
@@ -34,7 +34,7 @@ Even a good narration policy can fail or go quiet during a single long blocking 
 A future client surface could display, at minimum:
 
 ```text
-Disclosure: 9 completed calls since the last visible update · reminded at 8
+Disclosure: 9 completed calls since the last visible update · reminded at 8, 16
 Current: bash / running 00:42
 Control: Queue | Steer | Stop
 ```
@@ -107,7 +107,7 @@ Human-interaction tools inside generated code have an additional risk: the code 
 - Keep source links and dates in the repo. DSH is moving quickly enough that “this worked last month” is not a compatibility contract.
 - Be cautious with custom persisted event types. If you only need live policy state, prefer plugin-local projections until you have intentionally handled unknown-event/ignorable compatibility.
 
-## 13. Recommended next iteration after v0.3
+## 13. Recommended next iteration after v0.4
 
 The threshold remains a backstop, so the next honest improvement is not a lower number but a better
 trigger. Candidate high-value triggers: a verification step changes from failing to passing, a major
@@ -115,9 +115,14 @@ hypothesis is falsified, the implementation plan changes, a blocker appears, or 
 long-latency phase is about to start. DSH exposes none of these semantically today; a plugin would have
 to derive them from durable events and accept the misclassification risk.
 
-A separate, smaller step is a thin client projection for the silence counter, so the supervisor can see
-staleness without waiting for model prose. Keep the transcript focused on decisions and progress, and
-keep raw execution telemetry in the UI/runtime layer.
+Two smaller, sharper steps are now visible from the shipped behavior rather than from theory:
+
+- **Close the cross-turn gap.** Intervals are turn-local, so a model that keeps opening fresh turns
+  resets its own budget and can stay effectively silent without ever hitting the cadence. This is the
+  remaining structural hole in the reminder lane.
+- **Make the cadence observable to the supervisor.** The counter and the spent budget are plugin-local;
+  a thin client projection would let the supervisor see staleness without waiting for model prose. That
+  is also the only mechanism that does not depend on the model cooperating.
 
 ## 14. Codex comparison: use the layered pattern, not one magic threshold
 

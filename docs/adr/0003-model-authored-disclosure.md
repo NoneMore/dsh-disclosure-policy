@@ -1,6 +1,6 @@
 # Keep disclosure model-authored and best-effort
 
-Status: accepted (2026-09-16)
+Status: accepted (2026-09-16), partly superseded by [ADR-0004](0004-bounded-repeat-reminders.md) (2026-09-17)
 
 The plugin asks the model to disclose enough information for a supervisor to choose whether to intervene, but it does not generate disclosure from runtime facts or guarantee that disclosure occurs. A static policy states the semantic obligation and a single soft reminder may reinforce it; neither tool denial nor forced continuation is used. This deliberately accepts that an uncooperative model may remain silent in exchange for a substantially smaller, more auditable policy surface.
 
@@ -14,7 +14,7 @@ The plugin asks the model to disclose enough information for a supervisor to cho
 - Any non-empty visible model text resets the silence counter; the runtime does not score semantic quality.
 - The only behavioral option is `reminderAfterCalls` (default `8`, `0` disables reminders while retaining the standing policy).
 - Version 0.3 is a host-only plugin named `dsh-disclosure-policy`; it has no client component, facts-only experiment, or workspace metrics log.
-- Each uninterrupted silence interval receives at most one reminder. Only a later non-empty visible model message opens a new interval.
+- Each uninterrupted silence interval receives at most one reminder. Only a later non-empty visible model message opens a new interval. (Superseded by [ADR-0004](0004-bounded-repeat-reminders.md): an interval now receives a bounded cadence of reminders instead.)
 - The counter includes only tool calls requested directly by the model; nested calls inside composite tools do not count separately.
 - No opening preamble is required. The policy asks for concise disclosure at material findings, phase completion, direction changes, verification results, blockers, and before clearly long work.
 - A reminder asks for what is now known, whether the settled plan or constraints changed, and what comes next or warrants intervention. It never requests private reasoning.

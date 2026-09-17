@@ -13,7 +13,7 @@ GitHub `master` is mutable. When upgrading this plugin, re-check the official ro
 
 ## A. Official DSH contracts audited for the plugin
 
-| Source | What it establishes | How the shipped plugin uses it (v0.3) |
+| Source | What it establishes | How the shipped plugin uses it |
 |---|---|---|
 | DSH CLI package version — https://github.com/deepseek-ai/deepseek-harness/blob/master/apps/cli/package.json | The retrieved CLI package is `0.1.5-rc.2`. | Sets the tested/declared target baseline. |
 | Architecture — https://github.com/deepseek-ai/deepseek-harness/blob/master/docs/architecture.zh.md | Step order is model stream → durable `assistant/message`/attempt → `tool/call*` → tool pipeline → `tool/result*`; Turn closes after `agent/turn-stopping`. | Makes “visible text + next tool call in the same assistant response” a clean reset: the Assistant event opens a new silence interval before that response's tool calls settle. |
@@ -87,7 +87,7 @@ These sources explain the **communication policy** this plugin ports conceptuall
 
 **Community empirical evidence:** stale TODO update rates, specific UI pain points, steer delays under long blocking waits, and compatibility break reports. Treat these as environment/version observations rather than universal laws.
 
-**Plugin design choices/inferences:** `reminderAfterCalls = 8`, one reminder per silence interval, counting completed top-level calls, discarding state at `turn/end`, prompt order `10150`, and keeping counters in a plugin-local `WeakMap` are local policy choices. They are not DSH defaults. Section H lists the contracts the v0.3 design retains and the evidence for each.
+**Plugin design choices/inferences:** `reminderAfterCalls = 8`, `maxReminders = 3`, one delivered reminder per cadence period, counting completed top-level calls, discarding state at `turn/end`, prompt order `10150`, and keeping counters in a plugin-local `WeakMap` are local policy choices. They are not DSH defaults. Section H lists the contracts the design retains and the evidence for each.
 
 ## F. Codex interaction sources added in v0.2.1
 
@@ -127,20 +127,24 @@ Sections A–C record upstream `master` prose. This section re-checks the contra
 | Synchronous history readers are deprecated (rows 30, 69, E) | **Confirmed as upstream policy; the API claim was too strong.** The current session README says the three readers "are deprecated … new production calls are prohibited" and links `.agents/notes/implemented/architecture/2026-09-09-deprecate-synchronous-session-event-reads.md`. The installed `0.1.5-rc.2` types declare all three with no `@deprecated` marker (`DSHROOT/dsh-session/lib/types/index.d.ts:178,187,192`) and `dsh-session` still calls them internally. Read it as a policy prohibition, not a removal. |
 | Patch rows replace a row's `config` rather than merging it (README install note) | **Confirmed, with a caveat.** `applyEntryPatches` copies a patch's remaining top-level fields — including `config` — onto the matched entry (`DSHROOT/dsh-app-boot/lib/index.js:59-105`); there is no deep merge. Both plugin config layers then re-fill omitted options from hard-coded defaults, so an omitted option reverts to the default rather than inheriting this package's `cordis.patch.yml` value. A non-insert patch whose `name` does not match the row is skipped entirely (`:98-100`). |
 
-Limits of this re-check: section G began as a contract-level audit (type declarations plus implementation source). The v0.3 implementation environment later installed the full devDependency graph and ran the build, typecheck, and test suite. Release review also installed the packed artifact into an isolated real Web profile, confirmed the composed patch row, and booted it successfully. A live model turn reaching the reminder threshold remains unexercised; see `docs/VERIFICATION.md`.
+Limits of this re-check: section G began as a contract-level audit (type declarations plus implementation source). The v0.3 implementation environment later installed the full devDependency graph and ran the build, typecheck, and test suite. Release review also installed the packed artifact into an isolated real Web profile, confirmed the composed patch row, and booted it successfully. A live model turn reaching the reminder threshold was not driven by the release harness itself; see `docs/VERIFICATION.md`. (The 2026-09-17 change was later exercised in a real Web session: the reminder fired repeatedly during a long tool-call chain and was delivered without denying any call. That session could not distinguish a first reminder from a repeat, so it is evidence that delivery works in a live turn, not evidence about the budget accounting.)
 
-## H. Contracts retained by the simplified v0.3 design
+## H. Contracts retained by the simplified design
 
-The accepted v0.3 design in `.scratch/disclosure-policy/spec.md` deliberately uses a smaller subset of the contracts audited above. It keeps model-authored disclosure and one best-effort silence reminder; it does not generate runtime fact rows or enforce TODO freshness.
+The accepted design in `.scratch/disclosure-policy/spec.md` deliberately uses a smaller subset of the contracts audited above. It keeps model-authored disclosure and a bounded best-effort silence-reminder cadence; it does not generate runtime fact rows or enforce TODO freshness.
 
-| v0.3 dependency | Evidence and consequence |
+| Dependency | Evidence and consequence |
 |---|---|
 | Visible model text is observable without treating reasoning as disclosure | `assistant/message` is a durable surface event and visible `text` is distinct from `reasoning` (section A). A live `session/event` projection can therefore reset one turn-local silence counter without parsing prose. |
 | A model message is committed before its directly requested tools run | Confirmed in the installed implementation in section G. Text and tool calls in the same model response reset the silence interval before those top-level calls complete. |
 | Soft reminders can be appended without touching the prompt prefix | `tools/post-execute` supports `additionalContexts` on accept and block decisions (sections A and G). The agent loop delivers them on the next step; `.scratch/research/prompt-cache-and-volatile-text.md` traces the append-only path. |
-| Nested tool executions are identifiable | `ToolExecution.parent` distinguishes nested dispatches from calls requested directly by the model. v0.3 counts only executions with no parent, avoiding the former outer-`run_code`/inner-call policy matrix. |
-| Tool denial is unnecessary for disclosure | `ctx.tools.guard()` is monotonic and suited to hard invariants (sections A and G). ADR-0001 and ADR-0003 establish that disclosure is best-effort, so v0.3 registers no guard. |
-| No runtime commentary phase is available in DSH | The installed `assistant/message` payload has no commentary/final discriminator; `.scratch/research/dsh-extension-points.md` records the type and whole-install search. v0.3 therefore observes any non-empty visible model text and makes no phase or semantic-quality claim. |
-| Codex's disclosure cadence is model policy, not a portable runtime guarantee | Official Codex prompt and protocol sources remain external comparison evidence (sections D and F; detailed audit in `.scratch/research/codex-interaction-mechanics.md`). v0.3 ports the concise semantic obligation, not a universal time cadence or enforcement mechanism. |
+| Nested tool executions are identifiable | `ToolExecution.parent` distinguishes nested dispatches from calls requested directly by the model. The plugin counts only executions with no parent, avoiding the former outer-`run_code`/inner-call policy matrix. |
+| Tool denial is unnecessary for disclosure | `ctx.tools.guard()` is monotonic and suited to hard invariants (sections A and G). ADR-0001 and ADR-0003 establish that disclosure is best-effort, so the plugin registers no guard — including for repeat reminders (ADR-0004). |
+| No runtime commentary phase is available in DSH | The installed `assistant/message` payload has no commentary/final discriminator; `.scratch/research/dsh-extension-points.md` records the type and whole-install search. The plugin therefore observes any non-empty visible model text and makes no phase or semantic-quality claim. |
+| Codex's disclosure cadence is model policy, not a portable runtime guarantee | Official Codex prompt and protocol sources remain external comparison evidence (sections D and F; detailed audit in `.scratch/research/codex-interaction-mechanics.md`). The plugin ports the concise semantic obligation, not a universal time cadence or enforcement mechanism. |
 
-Design choices rather than upstream guarantees: `reminderAfterCalls = 8`, one reminder per silence interval, counting completed top-level calls, resetting state at each turn, and allowing `0` to disable runtime reminders. These must be tested as local policy behavior rather than attributed to DSH or Codex.
+Design choices rather than upstream guarantees: `reminderAfterCalls = 8`, `maxReminders = 3`, one delivered reminder per cadence period (anchored on the first delivery), counting completed top-level calls, resetting state at each turn, allowing the budget to be spent down without a new reminder, and allowing `0` in either option to disable runtime reminders. These must be tested as local policy behavior rather than attributed to DSH or Codex.
+
+### H.1 Not derived from any upstream contract
+
+The cadence shape itself is local: DSH provides no silence timer (a single tool call holds the step open, so wall-clock triggering is impossible; see ADR-0002's consequences), and no upstream source prescribes "one reminder per N calls up to a budget". The 2026-09-17 change from a one-shot latch to a bounded cadence is recorded in ADR-0004 and implemented in `src/policy.ts`; it is a response to this plugin's own observable behavior, not to a new DSH or Codex contract.

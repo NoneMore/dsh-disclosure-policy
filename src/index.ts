@@ -11,8 +11,9 @@ import {
   DISCLOSURE_POLICY_ORDER,
   DISCLOSURE_POLICY_SECTION_NAME,
   DISCLOSURE_POLICY_TEXT,
-  DISCLOSURE_REMINDER_TEXT,
   isModelDisclosure,
+  markReminderDelivered,
+  reminderTextFor,
   resetSilence,
   resolveConfig,
   withReminder,
@@ -29,15 +30,22 @@ export const inject = ['tools']
 
 export interface Config {
   /**
-   * Completed top-level tool calls in one silence interval before the single
-   * soft reminder. `0` disables runtime reminders while keeping the standing
-   * policy. Default 8.
+   * Completed top-level tool calls that advance the reminder cadence by one
+   * position. `0` disables runtime reminders while keeping the standing policy.
+   * Default 8.
    */
   reminderAfterCalls?: number
+  /**
+   * Reminder budget for one silence interval: at most this many notices, one
+   * every `reminderAfterCalls` completed top-level calls. `1` is the historical
+   * one-shot cadence; `0` disables runtime reminders. Default 3.
+   */
+  maxReminders?: number
 }
 
 export const Config: z<Config> = z.object({
   reminderAfterCalls: z.number().step(1).min(0).default(DEFAULT_CONFIG.reminderAfterCalls),
+  maxReminders: z.number().step(1).min(0).default(DEFAULT_CONFIG.maxReminders),
 })
 
 const SOURCE = {
@@ -61,8 +69,8 @@ function notice(text: string): UserMessage {
  *
  * - `session/event` maintains one turn-local silence interval per session from
  *   first-party durable facts;
- * - `tools/post-execute` counts settled top-level calls and appends at most one
- *   soft reminder per interval as next-step context.
+ * - `tools/post-execute` counts settled top-level calls and appends the due
+ *   soft reminder as next-step context, at most `maxReminders` per interval.
  *
  * The standing policy is a static prompt section. No guard is registered, no
  * task state is read or written, and nothing is steered from an event callback:
@@ -108,8 +116,8 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
     }))
   }
 
-  // The single soft reminder. It composes with downstream post-execute policy
-  // (accept or block) rather than replacing it, and it never denies a call.
+  // The soft reminders. They compose with downstream post-execute policy
+  // (accept or block) rather than replacing it, and they never deny a call.
   ctx.on('tools/post-execute', async (exec, _result, next): Promise<PostToolDecision> => {
     let downstream: PostToolDecision
     try {
@@ -117,12 +125,11 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
     } catch (error) {
       const state = exec.agent === undefined ? undefined : silences.get(exec.agent.session)
       if (state !== undefined) {
-        const reminderPending = countCompletedCall(state, config.reminderAfterCalls, {
+        // This boundary has no decision to carry additional context, so the
+        // call still advances the cadence but cannot spend a budget slot.
+        countCompletedCall(state, config.reminderAfterCalls, config.maxReminders, {
           nested: exec.parent !== undefined,
         })
-        // This boundary has no decision to carry additional context. Preserve a
-        // newly due reminder so the next deliverable boundary can attach it.
-        if (reminderPending) state.reminded = false
       }
       throw error
     }
@@ -130,11 +137,12 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
     const state = exec.agent === undefined ? undefined : silences.get(exec.agent.session)
     if (state === undefined) return downstream
 
-    const remind = countCompletedCall(state, config.reminderAfterCalls, {
+    const index = countCompletedCall(state, config.reminderAfterCalls, config.maxReminders, {
       nested: exec.parent !== undefined,
     })
-    if (!remind) return downstream
+    if (index === null) return downstream
 
-    return withReminder(downstream, notice(DISCLOSURE_REMINDER_TEXT))
+    markReminderDelivered(state, state.calls, index)
+    return withReminder(downstream, notice(reminderTextFor(index)))
   })
 }

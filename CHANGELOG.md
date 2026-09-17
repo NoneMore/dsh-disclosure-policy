@@ -1,5 +1,16 @@
 # Changelog
 
+## 0.4.0
+
+- Replaced the one-shot reminder latch with a bounded cadence. Each silence interval now receives one reminder per `reminderAfterCalls` completed top-level calls, up to `maxReminders` notices. The old behavior is exactly `maxReminders: 1`. See ADR-0004, which partly supersedes ADR-0003's "at most one reminder per interval".
+- Added the `maxReminders` option (`3` by default, `0` disables reminders alongside `reminderAfterCalls: 0`). The config surface is still two non-negative integers.
+- Added `DISCLOSURE_REPEAT_TEXT` and `reminderTextFor(index)`: the first reminder in an interval stays the bare request, and every later one appends one fixed sentence stating that this is a repeat reminder and that no visible disclosure has been sent in this stretch. It never states the remaining budget, so the model cannot infer when the plugin will stop asking.
+- Reworked `SilenceState` from `{ calls, reminded }` to `{ calls, firstReminderAt, delivered }`. The first delivered reminder anchors the cadence; each later one is due `reminderAfterCalls` calls after that anchor. A reminder still never resets the call count.
+- Budget slots are spent by **delivered** reminders only. A boundary whose downstream `tools/post-execute` listener throws still advances the cadence but leaves the slot for the next boundary that can carry `additionalContexts`.
+- Documented two accepted limits rather than papering over them: the interval (and therefore the budget) is turn-local, so a model that keeps opening fresh turns is not covered; and any visible text — including a one-word acknowledgement — opens a new interval, so the cadence raises the cost of silence but not of evasion.
+- Added `CONTEXT.md` term **Silence interval**; updated `README.md`, `docs/DESIGN.md`, `docs/HOW-IT-WORKS.md`, `docs/PRACTICES.md`, `docs/SOURCES.md` (sections E, G, H), and `docs/VERIFICATION.md`.
+- Test suite grew to 28 tests (17 pure policy, 11 runtime). The former "exactly once" assertions became cadence and budget assertions instead of being deleted. A live Web session was also observed delivering reminders without denying any call; that observation covers delivery, not the cadence, and `docs/VERIFICATION.md` states its limits.
+
 ## 0.3.0
 
 - Renamed the package, patch row, and plugin id to `dsh-disclosure-policy` / `disclosure-policy`. The repository directory is unchanged.

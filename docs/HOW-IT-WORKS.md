@@ -1,6 +1,6 @@
 # How `dsh-disclosure-policy` works
 
-Implementation walkthrough for **v0.3.0**, checked against the installed Harness tree.
+Implementation walkthrough for **v0.4.0**, checked against the installed Harness tree.
 
 - `DSHROOT` = `E:\Apps\nvm\v24.19.0\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai\`
 - Verified package versions: `dsh-*` `0.1.5-rc.2`, `cordis` `4.0.2`, `schemastery` `3.18.2`.
@@ -20,7 +20,7 @@ The plugin contributes three things:
 |---|---|
 | A static disclosure policy in the system prompt, order `10150` | `systemPrompt.section()` via `ctx.effect()` |
 | One turn-local silence projection per session | `session/event` listener |
-| At most one soft reminder per silence interval | `tools/post-execute` → `additionalContexts` |
+| At most `maxReminders` soft reminders per silence interval, one per cadence period | `tools/post-execute` → `additionalContexts` |
 
 Everything decidable lives in `src/policy.ts`, which imports nothing from the host. `src/index.ts` is a thin adapter — about 60 lines of code plus comments — over those decisions. `lib/` is the compiled output of `src/` and is what the tests exercise.
 
@@ -40,6 +40,7 @@ There is no guard, no `todo` access, no steering, and no durable event.
       name: dsh-disclosure-policy
       config:
         reminderAfterCalls: 8
+        maxReminders: 3
 ```
 
 `package.json` publishes it through `dsh.bundle.patch`, which is the installable-bundle convention (`docs/SOURCES.md` section A).
@@ -51,6 +52,7 @@ export const name = DISCLOSURE_PLUGIN_NAME
 export const inject = ['tools']
 export const Config: z<Config> = z.object({
   reminderAfterCalls: z.number().step(1).min(0).default(DEFAULT_CONFIG.reminderAfterCalls),
+  maxReminders: z.number().step(1).min(0).default(DEFAULT_CONFIG.maxReminders),
 })
 ```
 
@@ -93,10 +95,11 @@ so a future edit that adds a guard, a `todo/write` listener, or a `turn-stopping
 | Option | Schema | Default |
 |---|---|---|
 | `reminderAfterCalls` | `z.number().step(1).min(0)` | `8` |
+| `maxReminders` | `z.number().step(1).min(0)` | `3` |
 
-`resolveConfig()` in `src/policy.ts` re-validates the same rule (`Number.isSafeInteger && >= 0`) and throws `disclosure-policy: reminderAfterCalls must be a non-negative safe integer` otherwise. The schema catches malformed DSH config rows before `apply`; the pure check keeps the policy module authoritative for direct callers and for the tests.
+`resolveConfig()` in `src/policy.ts` re-validates the same rule (`Number.isSafeInteger && >= 0`) for both and throws `disclosure-policy: reminderAfterCalls must be a non-negative safe integer` or `disclosure-policy: maxReminders must be a non-negative safe integer` otherwise. The schema catches malformed DSH config rows before `apply`; the pure check keeps the policy module authoritative for direct callers and for the tests.
 
-`0` disables runtime reminders and leaves the standing policy installed. That is the only behavioral option; there are no cadence tiers, tool exemptions, or prose-length thresholds.
+Setting either option to `0` disables runtime reminders and leaves the standing policy installed. `maxReminders: 1` is the historical one-shot cadence. Those are the only two behavioral options; there are no cadence tiers, tool exemptions, or prose-length thresholds.
 
 ### The patch row's `config` replaces, it does not deep-merge
 
@@ -108,8 +111,9 @@ DSH copies a patch's remaining top-level fields — including `config` — onto 
 
 ```ts
 interface SilenceState {
-  calls: number     // completed top-level calls since it opened
-  reminded: boolean // whether this interval already received its reminder
+  calls: number                    // completed top-level calls since it opened
+  firstReminderAt: number | null   // call count where the first reminder was delivered
+  delivered: number                // reminders delivered, and the budget index of the next
 }
 ```
 
@@ -120,8 +124,8 @@ Lifecycle:
 | Event | Effect |
 |---|---|
 | `turn/start` | `silences.set(session, createSilence())` — replaces any previous record |
-| `assistant/message` with visible model text | `resetSilence(state)` — `calls = 0`, `reminded = false` |
-| `tools/post-execute` for a top-level call | `countCompletedCall(state, threshold, { nested })` |
+| `assistant/message` with visible model text | `resetSilence(state)` — `calls = 0`, `firstReminderAt = null`, `delivered = 0` |
+| `tools/post-execute` for a top-level call | `countCompletedCall(state, threshold, budget, { nested })` |
 | `turn/end` | `silences.delete(session)` |
 
 `turn/start` is the **only** initialization point. Nothing scans session history, which is what current DSH policy requires for new production code (`docs/SOURCES.md` section A). The cost is explicit: a hot reload mid-turn does not reconstruct the current interval, so accounting starts at the next `turn/start`.
@@ -170,9 +174,12 @@ The listener does three things in order:
 const downstream = await next()                       // 1. let downstream policy decide
 const state = exec.agent === undefined ? undefined : silences.get(exec.agent.session)
 if (state === undefined) return downstream
-const remind = countCompletedCall(state, config.reminderAfterCalls, { nested: exec.parent !== undefined })
-if (!remind) return downstream
-return withReminder(downstream, notice(DISCLOSURE_REMINDER_TEXT))  // 2/3. compose, do not replace
+const index = countCompletedCall(state, config.reminderAfterCalls, config.maxReminders, {
+  nested: exec.parent !== undefined,
+})
+if (index === null) return downstream
+markReminderDelivered(state, state.calls, index)      // 2. spend a budget slot only here
+return withReminder(downstream, notice(reminderTextFor(index)))  // 3. compose, do not replace
 ```
 
 ### Why `tools/post-execute` and not a guard
@@ -181,25 +188,34 @@ return withReminder(downstream, notice(DISCLOSURE_REMINDER_TEXT))  // 2/3. compo
 
 ### Every settled top-level call counts
 
-`postExecute()` runs for every dispatch outcome, and the pipeline routes a pre-execute denial back through it: a pre-policy denial materializes `{ kind: 'post-result', exec, result }` (`DSHROOT/dsh-tools/lib/index.js:3127-3139`), which `finalizeScheduledExecution()` then passes to `postExecute()` (`:3241-3243`). So the count is independent of success, failure, or another policy's denial — exactly as specified — without the plugin inspecting the result at all. If a downstream post-execute listener throws, the plugin advances the count before rethrowing; when that boundary makes the reminder due, it re-arms the latch so the next decision that can actually carry `additionalContexts` delivers the reminder.
+`postExecute()` runs for every dispatch outcome, and the pipeline routes a pre-execute denial back through it: a pre-policy denial materializes `{ kind: 'post-result', exec, result }` (`DSHROOT/dsh-tools/lib/index.js:3127-3139`), which `finalizeScheduledExecution()` then passes to `postExecute()` (`:3241-3243`). So the count is independent of success, failure, or another policy's denial — exactly as specified — without the plugin inspecting the result at all. If a downstream post-execute listener throws, the plugin advances the count before rethrowing but does **not** call `markReminderDelivered`, so the throwing boundary cannot consume a budget slot; the anchor stays unset and the reminder is delivered at the next boundary that can carry `additionalContexts`.
 
 ### Nested calls do not count
 
 `ToolExecutionInput.parent` is the opaque token of the enclosing transport execution; PTC mode sets it on SDK sub-dispatches (`DSHROOT/dsh-tools/lib/types/index.d.ts:209-218`). `countCompletedCall(..., { nested: exec.parent !== undefined })` returns immediately for those, so a `run_code` program that dispatches fifty native calls advances the interval once, for its own top-level call.
 
-### At most one reminder per interval
+### At most one reminder per cadence period, up to the interval budget
 
-`countCompletedCall()` mutates the interval and returns `true` only on the transition into the threshold:
+`countCompletedCall()` mutates the interval and returns the budget index of the reminder this call carries, or `null`:
 
 ```ts
 state.calls += 1
-if (reminderAfterCalls <= 0 || state.reminded) return false
-if (state.calls < reminderAfterCalls) return false
-state.reminded = true
-return true
+if (reminderAfterCalls <= 0 || maxReminders <= 0) return null
+
+const index = state.delivered
+if (index >= maxReminders) return null
+
+const dueAt = state.firstReminderAt === null
+  ? reminderAfterCalls
+  : state.firstReminderAt + index * reminderAfterCalls
+if (state.calls < dueAt) return null
+
+return index
 ```
 
-The `reminded` latch is why a parallel step yields at most one notice: whichever call settles at the threshold carries it, and every later call in the same interval returns `false`. The counter is not reset by the reminder, so it keeps measuring the interval until visible model text opens a new one.
+The first reminder anchors the cadence at the threshold call, and each later one is due `reminderAfterCalls` calls after that anchor, which is why a parallel step crosses at most one period and yields at most one notice. Because the anchor is set by `markReminderDelivered` rather than by counting alone, a boundary that cannot deliver leaves the anchor unset and the cadence starts at the next boundary that can. The counter is never reset by a reminder, so it keeps measuring the interval until visible model text opens a new one.
+
+The returned index selects the text: index `0` is `DISCLOSURE_REMINDER_TEXT`, and any later index appends `DISCLOSURE_REPEAT_TEXT`. Only the index decides, so the repeat sentence is stable across reminders and never states a remaining count (ADR-0004).
 
 ### Composition
 
@@ -220,14 +236,14 @@ The registry merges the tool body's deferred contexts first and the decision's c
 
 ```ts
 createUserMessage({
-  content: [{ type: 'text', text: DISCLOSURE_REMINDER_TEXT }],
+  content: [{ type: 'text', text: reminderTextFor(index) }],
   source: { kind: 'plugin', plugin: 'disclosure-policy', form: 'notice', summary: 'Disclosure reminder' },
 })
 ```
 
 `createUserMessage` requires both `content` and `source` (`DSHROOT/dsh-llm/lib/types/message.d.ts:180-183`); `form: 'notice'` requires a `summary` bounded to `CONTEXT_SUMMARY_MAX_CHARS = 120` (`:81-85`, `:110`). The summary is a static two-word label, not a runtime fact.
 
-The text itself is a constant: it asks for one or two sentences covering the three disclosure questions, then says to keep working. It contains no counter, no threshold, no denial threat, no question, and no reasoning request. The pure tests assert exactly that.
+The text is built from two constants: the request, which asks for one or two sentences covering the three disclosure questions and then says to keep working, and — for repeat reminders only — one fixed sentence stating that this is a repeat reminder and that no visible disclosure has been sent in this stretch. Both avoid a counter, a threshold, a denial threat, a question, a reasoning request, and any statement of the remaining budget; the pure tests assert exactly that.
 
 ---
 
@@ -245,7 +261,7 @@ The section states the semantic obligation in full: the six material moments, th
 
 ```text
 turn/start(turn 3)
-  -> state = { turn: 3, calls: 0, reminded: false }
+  -> state = { calls: 0, firstReminderAt: null, delivered: 0 }
 
 model replies with reasoning only, then calls read
   -> assistant/message: reasoning block only -> interval unchanged
@@ -253,18 +269,23 @@ model replies with reasoning only, then calls read
 
 model calls grep, glob, bash, read, edit, bash, read   (7 more calls)
   -> calls = 8 == reminderAfterCalls on the eighth settling call
-  -> that call's post-execute decision gains one plugin notice
+  -> that call's post-execute decision gains one plugin notice (index 0)
   -> the notice enters the next-step inbox
 
+model keeps calling tools without visible text  (8 more calls)
+  -> calls = 16 -> second notice (index 1, repeat sentence appended)
+
 model's next step sees the notice and emits visible text plus a tool call
-  -> assistant/message with visible text -> resetSilence(): calls = 0, reminded = false
+  -> assistant/message with visible text -> resetSilence(): calls = 0, firstReminderAt = null, delivered = 0
   -> its tool call settles -> calls = 1
 
 turn/end
   -> state discarded
 ```
 
-Parallel variant: if six calls settle from one step and the interval crosses the threshold inside that batch, exactly one of them carries the notice and the rest return untouched.
+Parallel variant: if six calls settle from one step and the interval crosses a cadence period inside that batch, exactly one of them carries that period's notice and the rest return untouched.
+
+Budget variant: after `delivered` reaches `maxReminders` the interval stays silent for every later call, however many settle, until visible model text opens a new one.
 
 Denied variant: a call denied by another policy still returns through `post-execute`, so it advances the interval and can carry the notice like any other call.
 
@@ -274,7 +295,7 @@ Denied variant: a call denied by another policy still returns through `post-exec
 
 - **No state yet.** Before the first observed `turn/start`, `tools/post-execute` returns the downstream decision untouched. Nothing is counted and nothing is reminded.
 - **No agent on the execution.** `exec.agent` is optional (`DSHROOT/dsh-tools/lib/types/index.d.ts:208`); when it is absent there is no session to key on, so the listener returns untouched.
-- **A downstream listener throws.** `next()` rejects, the error propagates, and the registry materializes a tool error result (`DSHROOT/dsh-tools/lib/index.js:3245-3247`). The completed top-level call still advances the interval. Because the throwing boundary cannot carry a decision, a newly due reminder stays pending and is attached at the next deliverable boundary.
+- **A downstream listener throws.** `next()` rejects, the error propagates, and the registry materializes a tool error result (`DSHROOT/dsh-tools/lib/index.js:3245-3247`). The completed top-level call still advances the interval, but no budget slot is spent. Because the throwing boundary cannot carry a decision, a newly due reminder stays pending and is attached at the next deliverable boundary.
 - **A downstream listener blocks.** The plugin keeps the `block` arm and prepends its context; a blocked call still counts, because it settled.
 - **`systemPrompt` absent or superseded.** The plugin mounts and reminds normally; only the standing text is missing.
 - **Repeated `turn/start` for the same session.** The record is replaced, which is the intended reset.
@@ -286,7 +307,9 @@ Denied variant: a call denied by another policy still returns through `post-exec
 
 - **Hot reload loses the current interval.** By design: no history scan. The first reminder after a reload can be delayed to the next turn.
 - **The threshold is a failsafe, not a semantic trigger.** Nothing in DSH exposes "a phase completed" or "a test now passes", so `reminderAfterCalls` measures silence, not meaning. The standing policy carries the meaning.
-- **A reminder can be ignored.** Disclosure is best-effort; the plugin has no way to compel it and does not try (ADR-0003).
+- **A reminder can be ignored.** Disclosure is best-effort; the plugin has no way to compel it and does not try (ADR-0003). ADR-0004 raises the cost of staying silent with a bounded repeat cadence, but an interval that spends its whole budget is still silent for the rest of that turn.
+- **Visible text is the only reset, and it is not scored.** A one-word acknowledgement opens a new interval exactly like a real disclosure, so the cadence raises the cost of silence but not of evasion; the plugin does not judge prose quality (ADR-0003, ADR-0004).
+- **The interval does not survive `turn/end`.** A model that keeps opening fresh turns is not covered by the cadence (ADR-0004).
 - **No commentary phase exists in this build.** The plugin never claims that a given assistant message is interim or final; it only observes that visible text exists.
 - **The real-profile check covered boot, not a model turn.** An isolated Web profile loaded the packed plugin and listened successfully, but no live model turn was driven through the reminder threshold; see `docs/VERIFICATION.md`.
 
@@ -298,7 +321,7 @@ Denied variant: a call denied by another policy still returns through `post-exec
 
 - `src/policy.ts`, `src/index.ts`, `lib/index.js` — the implementation described above.
 - `test/policy.test.mjs`, `test/runtime.test.mjs` — the behavioral contract.
-- `docs/DESIGN.md`, `docs/SOURCES.md`, `docs/adr/0001-supervision-over-enforcement.md`, `docs/adr/0003-model-authored-disclosure.md`.
+- `docs/DESIGN.md`, `docs/SOURCES.md`, `docs/adr/0001-supervision-over-enforcement.md`, `docs/adr/0003-model-authored-disclosure.md`, `docs/adr/0004-bounded-repeat-reminders.md`.
 
 ### Installed DSH contracts (`DSHROOT` = `E:\Apps\nvm\v24.19.0\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai\`)
 

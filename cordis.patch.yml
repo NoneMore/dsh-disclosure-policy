@@ -3,3 +3,4 @@
       name: dsh-disclosure-policy
       config:
         reminderAfterCalls: 8
+        maxReminders: 3

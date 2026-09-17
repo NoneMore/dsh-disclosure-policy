@@ -20,6 +20,10 @@ _Avoid_: approval gate, feedback cycle, steering request, 审批门, 反馈循�
 Model-authored information about a running execution that helps a supervisor decide whether to intervene. Disclosure is best-effort communication, not a runtime guarantee or a substitute for task state.
 _Avoid_: report, progress update, narration, status, 汇报, 进度更新, 旁白
 
+**Silence interval** (静默区间):
+A span of execution in which the supervisor has seen no visible model text: it opens with a visible model message and closes when the next one arrives. Reminder cadence and the reminder budget are policy over this interval, so they reset with it rather than belonging to Disclosure itself.
+_Avoid_: timeout, watchdog window, 超时, 看门狗
+
 ### Baseline
 
 **Execution brief** (执行简报):

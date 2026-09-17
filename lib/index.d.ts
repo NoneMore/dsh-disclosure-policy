@@ -4,11 +4,17 @@ export declare const name = "disclosure-policy";
 export declare const inject: string[];
 export interface Config {
     /**
-     * Completed top-level tool calls in one silence interval before the single
-     * soft reminder. `0` disables runtime reminders while keeping the standing
-     * policy. Default 8.
+     * Completed top-level tool calls that advance the reminder cadence by one
+     * position. `0` disables runtime reminders while keeping the standing policy.
+     * Default 8.
      */
     reminderAfterCalls?: number;
+    /**
+     * Reminder budget for one silence interval: at most this many notices, one
+     * every `reminderAfterCalls` completed top-level calls. `1` is the historical
+     * one-shot cadence; `0` disables runtime reminders. Default 3.
+     */
+    maxReminders?: number;
 }
 export declare const Config: z<Config>;
 /**
@@ -18,8 +24,8 @@ export declare const Config: z<Config>;
  *
  * - `session/event` maintains one turn-local silence interval per session from
  *   first-party durable facts;
- * - `tools/post-execute` counts settled top-level calls and appends at most one
- *   soft reminder per interval as next-step context.
+ * - `tools/post-execute` counts settled top-level calls and appends the due
+ *   soft reminder as next-step context, at most `maxReminders` per interval.
  *
  * The standing policy is a static prompt section. No guard is registered, no
  * task state is read or written, and nothing is steered from an event callback:

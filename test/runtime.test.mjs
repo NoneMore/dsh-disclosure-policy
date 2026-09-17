@@ -4,7 +4,7 @@ import {
   DISCLOSURE_POLICY_ORDER,
   DISCLOSURE_POLICY_SECTION_NAME,
   DISCLOSURE_POLICY_TEXT,
-  DISCLOSURE_REMINDER_TEXT,
+  reminderTextFor,
 } from '../lib/policy.js'
 
 // The host dependency graph is a devDependency of this repository, not a
@@ -121,7 +121,7 @@ function reminders(decision) {
   return (decision.additionalContexts ?? []).filter(message => message?.source?.plugin === 'disclosure-policy')
 }
 
-function assertNoticeShape(decision) {
+function assertNoticeShape(decision, index = 0) {
   const found = reminders(decision)
   assert.equal(found.length, 1)
   const [notice] = found
@@ -130,7 +130,7 @@ function assertNoticeShape(decision) {
   assert.equal(notice.source.form, 'notice')
   assert.equal(typeof notice.source.summary, 'string')
   assert.equal(notice.source.summary.length <= 120, true)
-  assert.deepEqual(notice.content, [{ type: 'text', text: DISCLOSURE_REMINDER_TEXT }])
+  assert.deepEqual(notice.content, [{ type: 'text', text: reminderTextFor(index) }])
   return notice
 }
 
@@ -147,30 +147,31 @@ test('the plugin listens to exactly the two sanctioned extension points', { skip
   assert.equal(harness.disposers.length, 1, 'the prompt section is owned by the plugin fiber')
 })
 
-test('the configured threshold yields one next-step reminder', { skip }, async () => {
+test('the configured cadence yields a repeat reminder per period up to the budget', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'session-1' }
-  host.apply(harness.ctx, { reminderAfterCalls: 8 })
+  host.apply(harness.ctx, { reminderAfterCalls: 8, maxReminders: 3 })
   harness.emit(session, TURN.start(1))
 
-  for (let call = 1; call < 8; call += 1) {
+  const carriers = []
+  for (let call = 1; call <= 32; call += 1) {
     const decision = await harness.postExecute(session)
-    assert.equal(decision.additionalContexts, undefined, `call ${call} stays untouched`)
+    const found = reminders(decision)
+    if (found.length === 0) {
+      assert.equal(decision.additionalContexts, undefined, `call ${call} stays untouched`)
+    } else {
+      carriers.push(call)
+      assertNoticeShape(decision, carriers.length - 1)
+    }
   }
 
-  const reminderDecision = await harness.postExecute(session)
-  assertNoticeShape(reminderDecision)
-
-  for (let call = 9; call <= 24; call += 1) {
-    const decision = await harness.postExecute(session)
-    assert.equal(decision.additionalContexts, undefined, `call ${call} is silent`)
-  }
+  assert.deepEqual(carriers, [8, 16, 24], 'three notices, one per cadence period')
 })
 
-test('visible model text re-arms the reminder while reasoning and plugin messages do not', { skip }, async () => {
+test('visible model text re-arms the interval while reasoning and plugin messages do not', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'session-2' }
-  host.apply(harness.ctx, { reminderAfterCalls: 3 })
+  host.apply(harness.ctx, { reminderAfterCalls: 3, maxReminders: 2 })
   harness.emit(session, TURN.start(1))
 
   harness.emit(session, modelMessage([{ type: 'reasoning', text: 'private reasoning only' }]))
@@ -179,19 +180,22 @@ test('visible model text re-arms the reminder while reasoning and plugin message
   for (let call = 0; call < 3; call += 1) {
     const decision = await harness.postExecute(session)
     if (call < 2) assert.equal(decision.additionalContexts, undefined, `silent call ${call}`)
-    else assertNoticeShape(decision)
+    else assertNoticeShape(decision, 0)
   }
 
   harness.emit(session, modelMessage([{ type: 'reasoning', text: 'more private reasoning' }]))
+  assert.equal((await harness.postExecute(session)).additionalContexts, undefined, 'call 4 is between periods')
+  assert.equal((await harness.postExecute(session)).additionalContexts, undefined, 'call 5 is between periods')
+  assertNoticeShape(await harness.postExecute(session), 1)
   for (let call = 0; call < 6; call += 1) {
     const decision = await harness.postExecute(session)
-    assert.equal(decision.additionalContexts, undefined, `still the same silence interval, call ${call}`)
+    assert.equal(decision.additionalContexts, undefined, `budget spent, still one interval, call ${call}`)
   }
 
   harness.emit(session, modelMessage([{ type: 'text', text: 'Root cause confirmed.' }]))
   await harness.postExecute(session)
   await harness.postExecute(session)
-  assertNoticeShape(await harness.postExecute(session))
+  assertNoticeShape(await harness.postExecute(session), 0)
 })
 
 test('nested calls do not count and a parallel step produces at most one notice', { skip }, async () => {
@@ -211,7 +215,11 @@ test('nested calls do not count and a parallel step produces at most one notice'
       delayMs: (12 - index) % 5,
     })),
   )
-  assert.equal(decisions.filter(decision => reminders(decision).length > 0).length, 1)
+  assert.equal(
+    decisions.filter(decision => reminders(decision).length > 0).length,
+    1,
+    'a parallel step crosses one cadence period, so at most one notice is delivered',
+  )
 })
 
 test('failed, denied, and blocked outcomes all still count as completed calls', { skip }, async () => {
@@ -232,7 +240,7 @@ test('failed, denied, and blocked outcomes all still count as completed calls', 
 test('a throwing downstream policy still counts and defers the reminder until delivery is possible', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'session-throwing-policy' }
-  host.apply(harness.ctx, { reminderAfterCalls: 2 })
+  host.apply(harness.ctx, { reminderAfterCalls: 2, maxReminders: 3 })
   harness.emit(session, TURN.start(1))
 
   await assert.rejects(
@@ -243,25 +251,30 @@ test('a throwing downstream policy still counts and defers the reminder until de
   assertNoticeShape(await harness.postExecute(session))
 })
 
-test('a zero threshold keeps the standing policy and stops reminders', { skip }, async () => {
-  const harness = createHarness()
-  const session = { id: 'session-4' }
-  host.apply(harness.ctx, { reminderAfterCalls: 0 })
-  harness.emit(session, TURN.start(1))
+test('a zero threshold or an empty budget keeps the standing policy and stops reminders', { skip }, async () => {
+  for (const config of [
+    { reminderAfterCalls: 0, maxReminders: 3 },
+    { reminderAfterCalls: 8, maxReminders: 0 },
+  ]) {
+    const harness = createHarness()
+    const session = { id: `session-${config.reminderAfterCalls}-${config.maxReminders}` }
+    host.apply(harness.ctx, config)
+    harness.emit(session, TURN.start(1))
 
-  for (let call = 0; call < 50; call += 1) {
-    const decision = await harness.postExecute(session)
-    assert.equal(decision.additionalContexts, undefined)
+    for (let call = 0; call < 50; call += 1) {
+      const decision = await harness.postExecute(session)
+      assert.equal(decision.additionalContexts, undefined)
+    }
+
+    assert.equal(harness.sections.length, 1)
+    assert.equal(harness.sections[0].text, DISCLOSURE_POLICY_TEXT)
   }
-
-  assert.equal(harness.sections.length, 1)
-  assert.equal(harness.sections[0].text, DISCLOSURE_POLICY_TEXT)
 })
 
 test('turn/end discards the state and the next turn starts clean', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'session-5' }
-  host.apply(harness.ctx, { reminderAfterCalls: 4 })
+  host.apply(harness.ctx, { reminderAfterCalls: 4, maxReminders: 3 })
 
   harness.emit(session, TURN.start(1))
   for (let call = 0; call < 4; call += 1) await harness.postExecute(session)
@@ -282,7 +295,7 @@ test('turn/end discards the state and the next turn starts clean', { skip }, asy
 test('a denied or blocked downstream decision keeps its shape and our context', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'session-6' }
-  host.apply(harness.ctx, { reminderAfterCalls: 1 })
+  host.apply(harness.ctx, { reminderAfterCalls: 1, maxReminders: 1 })
   harness.emit(session, TURN.start(1))
 
   const theirs = { role: 'user', source: { kind: 'plugin', plugin: 'other' }, content: [{ type: 'text', text: 'theirs' }] }
@@ -302,7 +315,7 @@ test('a denied or blocked downstream decision keeps its shape and our context', 
 test('an accepted downstream result keeps its content', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'session-7' }
-  host.apply(harness.ctx, { reminderAfterCalls: 1 })
+  host.apply(harness.ctx, { reminderAfterCalls: 1, maxReminders: 1 })
   harness.emit(session, TURN.start(1))
 
   const content = [{ type: 'text', text: 'tool output' }]
@@ -316,7 +329,7 @@ test('an accepted downstream result keeps its content', { skip }, async () => {
 test('an absent systemPrompt service is tolerated', { skip }, async () => {
   const harness = createHarness({ systemPrompt: false })
   const session = { id: 'session-8' }
-  host.apply(harness.ctx, { reminderAfterCalls: 2 })
+  host.apply(harness.ctx, { reminderAfterCalls: 2, maxReminders: 3 })
   harness.emit(session, TURN.start(1))
 
   assert.deepEqual(harness.eventNames().sort(), ['session/event', 'tools/post-execute'])

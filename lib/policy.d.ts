@@ -2,9 +2,10 @@
  * Pure disclosure policy.
  *
  * This module deliberately imports nothing from the host so the complete
- * behavior — silence accounting, reminder arming, and post-execute composition —
- * can be unit-tested without the DeepSeek Harness dependency graph. `index.ts`
- * is only the adapter that binds these decisions to Cordis extension points.
+ * behavior — silence accounting, reminder cadence, budget, and post-execute
+ * composition — can be unit-tested without the DeepSeek Harness dependency
+ * graph. `index.ts` is only the adapter that binds these decisions to Cordis
+ * extension points.
  */
 /** Package/plugin identity carried by every notice this policy emits. */
 export declare const DISCLOSURE_PLUGIN_NAME = "disclosure-policy";
@@ -18,15 +19,21 @@ export declare const DISCLOSURE_POLICY_ORDER = 10150;
 export declare const DISCLOSURE_POLICY_SECTION_NAME = "plugin:disclosure-policy:policy";
 export interface DisclosureConfig {
     /**
-     * Completed top-level tool calls in one silence interval before the single
-     * soft reminder. `0` disables runtime reminders while keeping the standing
-     * policy.
+     * Completed top-level tool calls that advance the reminder cadence by one
+     * position. `0` disables runtime reminders while keeping the standing policy.
      */
     reminderAfterCalls: number;
+    /**
+     * Reminder budget for one silence interval: at most this many notices, one
+     * every `reminderAfterCalls` completed top-level calls, after which the
+     * interval stays silent until visible model text opens a new one. `1` is the
+     * historical one-shot cadence; `0` disables runtime reminders.
+     */
+    maxReminders: number;
 }
 export declare const DEFAULT_CONFIG: Readonly<DisclosureConfig>;
 /**
- * Resolve and validate the single behavioral option. The schema in `index.ts`
+ * Resolve and validate the two behavioral options. The schema in `index.ts`
  * already rejects malformed DSH config rows; this second check keeps the pure
  * module authoritative and fails closed for direct callers.
  */
@@ -46,7 +53,9 @@ export interface MessageLike {
  * True when any visible `text` block carries a non-whitespace character.
  *
  * Reasoning blocks are not disclosure, and an empty or whitespace-only text
- * block is not a message the supervisor can read.
+ * block is not a message the supervisor can read. Because this predicate is the
+ * whole quality rule, a one-word acknowledgement resets the interval exactly
+ * like a real disclosure; the runtime does not score semantics.
  */
 export declare function hasVisibleText(content: readonly ContentBlockLike[]): boolean;
 /**
@@ -58,33 +67,48 @@ export declare function isModelDisclosure(message: MessageLike): boolean;
 /**
  * One turn-local silence interval: a run of completed top-level tool calls with
  * no visible model text since it opened.
+ *
+ * The reminder budget belongs to this interval, so the interval — not the
+ * individual reminder — is the unit that resets with visible model text.
  */
 export interface SilenceState {
-    /** Completed top-level tool calls since the interval opened. */
+    /** Completed top-level tool calls since the interval opened. Never reset by a reminder. */
     calls: number;
-    /** Whether this interval already received its one reminder. */
-    reminded: boolean;
+    /** Call count where this interval's first reminder was actually delivered; `null` means none yet. */
+    firstReminderAt: number | null;
+    /** Reminders delivered in this interval, and the budget index of the next one. */
+    delivered: number;
 }
 /** `turn/start` initializes the interval. */
 export declare function createSilence(): SilenceState;
 /**
  * Open a new interval in place: visible model text (or a new turn) clears the
- * call count and re-arms the single reminder, without replacing the record.
+ * call count, the first-reminder anchor, and the delivered count, without
+ * replacing the record.
  */
 export declare function resetSilence(state: SilenceState): SilenceState;
 /**
- * Count one completed top-level call and report whether it carries the
- * interval's single reminder.
+ * Count one completed top-level call and report which reminder it carries.
  *
- * Nested calls inside a composite tool never count. The reminder does not reset
- * the count, and a silence interval is reminded at most once, so a parallel step
- * can produce at most one notice. The result is independent of whether the call
- * succeeded, failed, or was denied by another policy, because every settled call
- * reaches the caller exactly once.
+ * Nested calls inside a composite tool never count. The result is independent of
+ * whether the call succeeded, failed, or was denied by another policy, because
+ * every settled call reaches the caller exactly once.
+ *
+ * The cadence is per interval, not per call: `null` means this call carries no
+ * reminder, and a number selects the text (see {@link reminderTextFor}).
+ * `markReminderDelivered` is a separate step on purpose — a boundary that throws
+ * or is otherwise unable to deliver context must not consume a budget slot.
  */
-export declare function countCompletedCall(state: SilenceState, reminderAfterCalls: number, options?: {
+export declare function countCompletedCall(state: SilenceState, reminderAfterCalls: number, maxReminders: number, options?: {
     readonly nested?: boolean;
-}): boolean;
+}): number | null;
+/**
+ * Record that a reminder was actually delivered at call count `calls`.
+ *
+ * Called only where `additionalContexts` can carry the notice, so an interval's
+ * budget is spent by delivered reminders rather than attempted ones.
+ */
+export declare function markReminderDelivered(state: SilenceState, calls: number, index: number): void;
 export interface ReminderCarrier<TNotice> {
     readonly kind: string;
     readonly additionalContexts?: readonly TNotice[];
@@ -114,3 +138,23 @@ export declare const DISCLOSURE_POLICY_TEXT: string;
  * denial, no request for user input, and no chain-of-thought request.
  */
 export declare const DISCLOSURE_REMINDER_TEXT: string;
+/**
+ * The one sentence that distinguishes a later reminder in the same interval.
+ *
+ * It states the bounded runtime fact the plugin actually observed — this
+ * interval is a repeat reminder and still carries no visible model text. That is
+ * verifiable and is information the model does not reliably have about itself,
+ * which is what a repeat buys. "Repeat" labels the message, not the model's
+ * conduct, so it stays true without accusing anyone.
+ *
+ * It deliberately does not count reminders or mention a budget: telling the
+ * model how many notices remain would let it wait the cadence out and turn the
+ * disclosure policy into a game.
+ */
+export declare const DISCLOSURE_REPEAT_TEXT = "This is a repeat reminder: no visible disclosure has been sent in this stretch.";
+/**
+ * The reminder text for one budget slot: the first reminder in an interval is
+ * {@link DISCLOSURE_REMINDER_TEXT} verbatim, and every later one appends
+ * {@link DISCLOSURE_REPEAT_TEXT} without changing the request.
+ */
+export declare function reminderTextFor(index: number): string;

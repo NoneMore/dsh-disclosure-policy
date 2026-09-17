@@ -9,23 +9,28 @@ import {
   DISCLOSURE_POLICY_SECTION_NAME,
   DISCLOSURE_POLICY_TEXT,
   DISCLOSURE_REMINDER_TEXT,
+  DISCLOSURE_REPEAT_TEXT,
   hasVisibleText,
   isModelDisclosure,
+  markReminderDelivered,
+  reminderTextFor,
   resetSilence,
   resolveConfig,
   withReminder,
 } from '../lib/policy.js'
 
-test('the only option defaults to 8 and 0 disables reminders', () => {
-  assert.deepEqual(resolveConfig(), { reminderAfterCalls: 8 })
-  assert.deepEqual(DEFAULT_CONFIG, { reminderAfterCalls: 8 })
-  assert.deepEqual(resolveConfig({ reminderAfterCalls: 0 }), { reminderAfterCalls: 0 })
-  assert.deepEqual(resolveConfig({ reminderAfterCalls: 3 }), { reminderAfterCalls: 3 })
+test('the two options default to 8/3 and 0 disables reminders', () => {
+  assert.deepEqual(resolveConfig(), { reminderAfterCalls: 8, maxReminders: 3 })
+  assert.deepEqual(DEFAULT_CONFIG, { reminderAfterCalls: 8, maxReminders: 3 })
+  assert.deepEqual(resolveConfig({ reminderAfterCalls: 0 }), { reminderAfterCalls: 0, maxReminders: 3 })
+  assert.deepEqual(resolveConfig({ reminderAfterCalls: 3, maxReminders: 1 }), { reminderAfterCalls: 3, maxReminders: 1 })
+  assert.deepEqual(resolveConfig({ maxReminders: 0 }), { reminderAfterCalls: 8, maxReminders: 0 })
 })
 
-test('a non-integer or negative threshold fails closed', () => {
+test('a non-integer or negative option fails closed', () => {
   for (const invalid of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, '8']) {
     assert.throws(() => resolveConfig({ reminderAfterCalls: invalid }), /reminderAfterCalls/)
+    assert.throws(() => resolveConfig({ maxReminders: invalid }), /maxReminders/)
   }
 })
 
@@ -53,63 +58,94 @@ test('only model-authored assistant text opens a silence interval', () => {
   )
 })
 
-test('one silence interval is reminded exactly once at the threshold', () => {
+test('one interval spends its budget one reminder per cadence period, then goes quiet', () => {
   const state = createSilence()
-  assert.deepEqual(state, { calls: 0, reminded: false })
+  assert.deepEqual(state, { calls: 0, firstReminderAt: null, delivered: 0 })
 
-  for (let call = 1; call < 8; call += 1) {
-    assert.equal(countCompletedCall(state, 8), false, `call ${call}`)
+  // Reminders are recorded where they can actually be delivered, so the pure
+  // test drives the same two steps the adapter does.
+  const due = []
+  for (let call = 1; call <= 32; call += 1) {
+    const index = countCompletedCall(state, 8, 3)
+    if (index !== null) markReminderDelivered(state, state.calls, index)
+    due.push(index)
   }
-  assert.equal(state.calls, 7)
-  assert.equal(state.reminded, false)
 
-  assert.equal(countCompletedCall(state, 8), true)
-  assert.equal(state.calls, 8, 'the reminder does not reset the count')
-  assert.equal(state.reminded, true)
-
-  for (let call = 9; call <= 20; call += 1) {
-    assert.equal(countCompletedCall(state, 8), false, `call ${call}`)
-  }
-  assert.equal(state.calls, 20)
+  assert.deepEqual(due, [
+    ...Array(7).fill(null),
+    0, ...Array(7).fill(null),
+    1, ...Array(7).fill(null),
+    2, ...Array(8).fill(null),
+  ], 'reminders land at calls 8, 16, and 24, and nowhere else')
+  assert.equal(state.calls, 32, 'a reminder never resets the count')
+  assert.equal(state.delivered, 3)
 })
 
-test('visible model text opens a new interval and re-arms the reminder', () => {
+test('the budget is bounded by maxReminders and 1 restores the one-shot cadence', () => {
+  const once = createSilence()
+  const sent = []
+  for (let call = 0; call < 40; call += 1) {
+    const index = countCompletedCall(once, 8, 1)
+    if (index !== null) {
+      sent.push(index)
+      markReminderDelivered(once, once.calls, index)
+    }
+  }
+  assert.deepEqual(sent, [0], 'maxReminders 1 is the historical one-shot latch')
+})
+
+test('the first reminder is the base text and later ones add the repeat sentence', () => {
+  assert.equal(reminderTextFor(0), DISCLOSURE_REMINDER_TEXT)
+  assert.equal(reminderTextFor(1), `${DISCLOSURE_REMINDER_TEXT} ${DISCLOSURE_REPEAT_TEXT}`)
+  assert.equal(reminderTextFor(2), `${DISCLOSURE_REMINDER_TEXT} ${DISCLOSURE_REPEAT_TEXT}`)
+})
+
+test('visible model text re-arms the reminder and its budget', () => {
   const state = createSilence()
-  for (let call = 0; call < 8; call += 1) countCompletedCall(state, 8)
-  assert.equal(state.reminded, true)
+  for (let call = 0; call < 8; call += 1) {
+    const index = countCompletedCall(state, 8, 3)
+    if (index !== null) markReminderDelivered(state, state.calls, index)
+  }
+  assert.deepEqual(state, { calls: 8, firstReminderAt: 8, delivered: 1 })
 
   resetSilence(state)
-  assert.deepEqual(state, { calls: 0, reminded: false })
+  assert.deepEqual(state, { calls: 0, firstReminderAt: null, delivered: 0 })
 
-  for (let call = 0; call < 7; call += 1) assert.equal(countCompletedCall(state, 8), false)
-  assert.equal(countCompletedCall(state, 8), true)
+  for (let call = 0; call < 7; call += 1) assert.equal(countCompletedCall(state, 8, 3), null)
+  assert.equal(countCompletedCall(state, 8, 3), 0)
 })
 
 test('nested calls inside a composite tool never count', () => {
   const state = createSilence()
   for (let call = 0; call < 50; call += 1) {
-    assert.equal(countCompletedCall(state, 1, { nested: true }), false)
+    assert.equal(countCompletedCall(state, 1, 3, { nested: true }), null)
   }
   assert.equal(state.calls, 0, 'nested calls do not advance the interval')
-  assert.equal(countCompletedCall(state, 1), true)
+  assert.equal(countCompletedCall(state, 1, 3), 0)
 })
 
-test('a parallel step yields at most one reminder', () => {
+test('a parallel step spends at most one budget slot', () => {
   const state = createSilence()
-  let reminders = 0
+  const due = []
   for (let call = 0; call < 12; call += 1) {
-    if (countCompletedCall(state, 8)) reminders += 1
+    const index = countCompletedCall(state, 8, 3)
+    if (index !== null) {
+      due.push(index)
+      markReminderDelivered(state, state.calls, index)
+    }
   }
-  assert.equal(reminders, 1)
+  assert.deepEqual(due, [0], 'the call that crosses a period is the only one that carries its reminder')
   assert.equal(state.calls, 12)
 })
 
-test('a zero threshold disables reminders without breaking counting', () => {
-  const state = createSilence()
-  for (let call = 0; call < 9; call += 1) {
-    assert.equal(countCompletedCall(state, 0), false)
+test('a zero threshold or an empty budget disables reminders without breaking counting', () => {
+  for (const config of [{ reminderAfterCalls: 0, maxReminders: 3 }, { reminderAfterCalls: 8, maxReminders: 0 }]) {
+    const state = createSilence()
+    for (let call = 0; call < 20; call += 1) {
+      assert.equal(countCompletedCall(state, config.reminderAfterCalls, config.maxReminders), null)
+    }
+    assert.equal(state.calls, 20)
   }
-  assert.equal(state.calls, 9)
 })
 
 test('the reminder composes into a downstream decision and preserves it', () => {
@@ -153,7 +189,7 @@ test('the standing policy covers the material disclosure moments', () => {
   assert.match(DISCLOSURE_POLICY_TEXT, /question only when/i)
 })
 
-test('the reminder asks for brief disclosure and makes no runtime claim or threat', () => {
+test('the reminder asks for brief disclosure and makes no claim or threat', () => {
   assert.match(DISCLOSURE_REMINDER_TEXT, /one or two/)
   assert.match(DISCLOSURE_REMINDER_TEXT, /what is now confirmed/)
   assert.match(DISCLOSURE_REMINDER_TEXT, /what happens next/)
@@ -161,6 +197,20 @@ test('the reminder asks for brief disclosure and makes no runtime claim or threa
   assert.doesNotMatch(DISCLOSURE_REMINDER_TEXT, /\d+\s+(ordinary\s+)?(tool\s+)?calls?/i)
   assert.doesNotMatch(DISCLOSURE_REMINDER_TEXT, /deny|denied|blocked|threshold|guard/i)
   assert.doesNotMatch(DISCLOSURE_REMINDER_TEXT, /reasoning|chain-of-thought/i)
+})
+
+test('the repeat sentence states one bounded fact and never the remaining budget', () => {
+  // The repeat is allowed to report what the plugin observed — this interval
+  // already got a reminder and still carries no visible model text — and the
+  // first reminder stays the bare request.
+  assert.equal(reminderTextFor(1).endsWith(DISCLOSURE_REPEAT_TEXT), true)
+  assert.equal(reminderTextFor(0).endsWith(DISCLOSURE_REPEAT_TEXT), false)
+
+  assert.doesNotMatch(DISCLOSURE_REPEAT_TEXT, /\?/, 'the repeat asks the user nothing')
+  assert.doesNotMatch(DISCLOSURE_REPEAT_TEXT, /\d/, 'no counts, so no budget can be inferred')
+  assert.doesNotMatch(DISCLOSURE_REPEAT_TEXT, /budget|remaining|more|second|third|left|last/i)
+  assert.doesNotMatch(DISCLOSURE_REPEAT_TEXT, /deny|denied|blocked|threshold|guard|calls?/i)
+  assert.doesNotMatch(DISCLOSURE_REPEAT_TEXT, /reasoning|chain-of-thought/i)
 })
 
 test('the disclosure section keeps its slot in the prompt order', () => {

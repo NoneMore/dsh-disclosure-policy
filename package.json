@@ -1,7 +1,7 @@
 {
   "name": "dsh-disclosure-policy",
-  "version": "0.3.0",
-  "description": "Ask a DeepSeek Harness model to disclose briefly during long autonomous turns, with at most one soft reminder per silence interval.",
+  "version": "0.4.0",
+  "description": "Ask a DeepSeek Harness model to disclose briefly during long autonomous turns, with a bounded soft reminder cadence per silence interval.",
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/index.d.ts",
