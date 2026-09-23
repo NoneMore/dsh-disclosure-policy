@@ -1,5 +1,13 @@
 # Changelog
 
+## 0.4.1 - 2026-09-24
+
+- Adapt to DeepSeek Harness 0.1.7-rc.1.
+- Register a dedicated `disclosure-policy` message source after DSH removed the generic plugin source kind.
+- Raise DSH, Cordis, and Schemastery compatibility/dev baselines to the 0.1.7-rc.1 release family.
+- Add GitHub Actions CI for Node 22.19 and 24 with typecheck, build, tests, committed-output verification, and package inspection.
+
+
 ## 0.4.0
 
 - Replaced the one-shot reminder latch with a bounded cadence. Each silence interval now receives one reminder per `reminderAfterCalls` completed top-level calls, up to `maxReminders` notices. The old behavior is exactly `maxReminders: 1`. See ADR-0004, which partly supersedes ADR-0003's "at most one reminder per interval".

@@ -96,7 +96,7 @@ function pluginMessage() {
     type: 'user/message',
     data: {
       role: 'user',
-      source: { kind: 'plugin', plugin: 'other-plugin', form: 'notice', summary: 'notice' },
+      source: { kind: 'other-plugin', form: 'notice', summary: 'notice' },
       content: [{ type: 'text', text: 'plugin-authored notice' }],
     },
   }
@@ -110,7 +110,7 @@ function pluginAuthoredAssistantMessage() {
       step: 1,
       message: {
         role: 'assistant',
-        source: { kind: 'plugin', plugin: 'other-plugin', form: 'notice', summary: 'notice' },
+        source: { kind: 'other-plugin', form: 'notice', summary: 'notice' },
         content: [{ type: 'text', text: 'a plugin-authored assistant row' }],
       },
     },
@@ -118,7 +118,7 @@ function pluginAuthoredAssistantMessage() {
 }
 
 function reminders(decision) {
-  return (decision.additionalContexts ?? []).filter(message => message?.source?.plugin === 'disclosure-policy')
+  return (decision.additionalContexts ?? []).filter(message => message?.source?.kind === 'disclosure-policy')
 }
 
 function assertNoticeShape(decision, index = 0) {
@@ -126,7 +126,7 @@ function assertNoticeShape(decision, index = 0) {
   assert.equal(found.length, 1)
   const [notice] = found
   assert.equal(notice.role, 'user')
-  assert.equal(notice.source.kind, 'plugin')
+  assert.equal(notice.source.kind, 'disclosure-policy')
   assert.equal(notice.source.form, 'notice')
   assert.equal(typeof notice.source.summary, 'string')
   assert.equal(notice.source.summary.length <= 120, true)

@@ -1,6 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
-import { createUserMessage, type UserMessage } from '@deepseek-ai/dsh-llm'
+import { createUserMessage, type ContextFormed, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
 import type { PostToolDecision } from '@deepseek-ai/dsh-tools'
 import {
@@ -24,6 +24,12 @@ import {
 import type {} from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
+
+declare module '@deepseek-ai/dsh-llm' {
+  interface MessageSourceMap {
+    'disclosure-policy': { kind: 'disclosure-policy' } & ContextFormed
+  }
+}
 
 export const name = DISCLOSURE_PLUGIN_NAME
 export const inject = ['tools']
@@ -49,8 +55,7 @@ export const Config: z<Config> = z.object({
 })
 
 const SOURCE = {
-  kind: 'plugin' as const,
-  plugin: DISCLOSURE_PLUGIN_NAME,
+  kind: 'disclosure-policy' as const,
   form: 'notice' as const,
   summary: 'Disclosure reminder',
 }
