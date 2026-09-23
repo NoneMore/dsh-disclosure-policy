@@ -9,7 +9,7 @@ The plugin supports the human's job during execution — **supervision** — rat
 
 Disclosure is model-authored and best-effort. The plugin never denies a tool call, never rewrites task state, and never forces another step. See [`docs/adr/0001-supervision-over-enforcement.md`](docs/adr/0001-supervision-over-enforcement.md), [`docs/adr/0003-model-authored-disclosure.md`](docs/adr/0003-model-authored-disclosure.md), and [`docs/adr/0004-bounded-repeat-reminders.md`](docs/adr/0004-bounded-repeat-reminders.md).
 
-Target baseline: **DeepSeek Harness 0.1.5-rc.2**. This checkout ships prebuilt `lib/` JavaScript so it can be installed without compiling TypeScript first.
+Target baseline: **DeepSeek Harness 0.1.7-rc.1**. This checkout ships prebuilt `lib/` JavaScript so it can be installed without compiling TypeScript first.
 
 > v0.3.0 replaced the v0.2.x `dsh-todo-checkpoint-guard` policy. The package, the patch row, and the plugin id are now `dsh-disclosure-policy` / `disclosure-policy`; TODO freshness and tool-call denial are out of scope. The repository directory name is unchanged. v0.4.0 keeps that scope and replaces the one-shot reminder latch with a bounded cadence.
 
@@ -53,7 +53,7 @@ Rules:
 - The plugin appends each notice as one plugin-sourced context through `tools/post-execute` → `additionalContexts`, delivered on the next model step.
 - A parallel step crosses at most one cadence period, so it produces at most one reminder.
 - The reminder never resets the call count, so it keeps measuring the whole interval.
-- The notice is `createUserMessage` with `source: { kind: 'plugin', plugin: 'disclosure-policy', form: 'notice', summary }`, and it is prepended to whatever downstream post-execute decisions and contexts already exist.
+- The notice is `createUserMessage` with `source: { kind: 'disclosure-policy', form: 'notice', summary }`, and it is prepended to whatever downstream post-execute decisions and contexts already exist.
 
 The reminder asks for one or two sentences covering the three questions above. The first reminder in an interval is the bare request; every later one appends one fixed sentence stating that this is a repeat reminder and that no visible disclosure has been sent in this stretch. It never states how many reminders remain, contains no runtime fact row, no threat of denial, no request for user input, and no chain-of-thought request.
 
