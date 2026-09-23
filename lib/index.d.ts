@@ -1,6 +1,6 @@
 import type { Context } from '@deepseek-ai/cordis';
 import z from '@deepseek-ai/schemastery';
-import type { ContextFormed } from '@deepseek-ai/dsh-llm';
+import { type ContextFormed } from '@deepseek-ai/dsh-llm';
 declare module '@deepseek-ai/dsh-llm' {
     interface MessageSourceMap {
         'disclosure-policy': {
