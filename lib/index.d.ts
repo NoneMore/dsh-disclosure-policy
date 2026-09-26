@@ -23,7 +23,7 @@ export interface Config {
      * one-shot reminder; `0` disables runtime reminders. Default 3.
      */
     maxReminders?: number;
-    /** Recent operations retained, including nested native tools; 0 disables hints alone. Default 16. */
+    /** Recent operations retained for an eligible native root; 0 disables hints alone. Default 16. */
     activityWindowSize?: number;
     /** Minimum inspections in the activity window, independent of cadence. Default 8. */
     inspectionHintMinInspections?: number;
@@ -32,18 +32,15 @@ export declare const Config: z<Config>;
 /**
  * `dsh-disclosure-policy` host plugin.
  *
- * Disclosure is a first-class model action rather than a magic Assistant-text
- * shape. The registered `disclose_progress` tool carries the standing policy in
- * its compact schema description, records model-authored progress as durable tool
- * arguments, and opens a fresh reminder interval when it executes.
+ * The plugin is intentionally native-root-only. PTC/both agents and runtime
+ * child agents receive no `disclose_progress` schema, no cadence state, and no
+ * post-execute reminder listener.
  *
- * Runtime accounting still uses only two lightweight observation points:
- *
- * - `session/event` creates/discards one turn-local interval;
- * - `tools/post-execute` counts settled work and appends bounded reminder
- *   context when the model has gone too long without calling `disclose_progress`.
+ * One global `agent/created` listener discovers future eligible roots. Each
+ * eligible Agent owns the actual tool and observation listeners through
+ * `agent.ctx`, so they unwind with that Agent and scope-filter naturally.
  *
  * No guard, TODO mutation, semantic prose classifier, or turn-stop steering is
- * registered. See ADR-0007.
+ * registered. See ADR-0008.
  */
 export declare function apply(ctx: Context, rawConfig?: Config): void;
