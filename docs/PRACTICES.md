@@ -1,6 +1,6 @@
 # DSH plugin + human-interaction practices
 
-Research snapshot: 2026-09-16. Detailed provenance lives in `SOURCES.md`.
+Research snapshot: 2026-09-16. Detailed provenance lives in `SOURCES.md`. Current local policy (ADR-0005, 2026-09-26) recognizes complete structured disclosure rather than any visible text; historical v0.2/v0.3 descriptions below are version-specific.
 
 ## 1. Separate three concerns
 

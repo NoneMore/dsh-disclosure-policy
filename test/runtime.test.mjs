@@ -71,6 +71,7 @@ function createHarness(options = {}) {
       const registered = listeners.get('tools/post-execute') ?? []
       assert.equal(registered.length, 1, 'exactly one post-execute listener')
       return await registered[0](execution, result, async () => {
+        if (options.waitFor !== undefined) await options.waitFor
         if (options.delayMs !== undefined) await new Promise(resolve => setTimeout(resolve, options.delayMs))
         if (options.downstreamError !== undefined) throw options.downstreamError
         return downstream
@@ -121,7 +122,7 @@ function reminders(decision) {
   return (decision.additionalContexts ?? []).filter(message => message?.source?.kind === 'disclosure-policy')
 }
 
-function assertNoticeShape(decision, index = 0) {
+function assertNoticeShape(decision, index = 0, activityFact = null) {
   const found = reminders(decision)
   assert.equal(found.length, 1)
   const [notice] = found
@@ -130,7 +131,7 @@ function assertNoticeShape(decision, index = 0) {
   assert.equal(notice.source.form, 'notice')
   assert.equal(typeof notice.source.summary, 'string')
   assert.equal(notice.source.summary.length <= 120, true)
-  assert.deepEqual(notice.content, [{ type: 'text', text: reminderTextFor(index) }])
+  assert.deepEqual(notice.content, [{ type: 'text', text: reminderTextFor(index, activityFact) }])
   return notice
 }
 
@@ -168,7 +169,7 @@ test('the configured cadence yields a repeat reminder per period up to the budge
   assert.deepEqual(carriers, [8, 16, 24], 'three notices, one per cadence period')
 })
 
-test('visible model text re-arms the interval while reasoning and plugin messages do not', { skip }, async () => {
+test('structured model disclosure re-arms the interval while reasoning and plugin messages do not', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'session-2' }
   host.apply(harness.ctx, { reminderAfterCalls: 3, maxReminders: 2 })
@@ -192,10 +193,193 @@ test('visible model text re-arms the interval while reasoning and plugin message
     assert.equal(decision.additionalContexts, undefined, `budget spent, still one interval, call ${call}`)
   }
 
-  harness.emit(session, modelMessage([{ type: 'text', text: 'Root cause confirmed.' }]))
+  harness.emit(session, modelMessage([{ type: 'text', text: 'Disclosure:\nDone: Confirmed the filter gap.\nNext: Fix the entry.\nApproach: Run a proceed regression.' }]))
   await harness.postExecute(session)
   await harness.postExecute(session)
   assertNoticeShape(await harness.postExecute(session), 0)
+})
+
+test('only complete disclosure resets cadence and budget, including repeated disclosure', { skip }, async () => {
+  const harness = createHarness()
+  const session = { id: 'session-structured-disclosure' }
+  host.apply(harness.ctx, { reminderAfterCalls: 3, maxReminders: 2, activityWindowSize: 0 })
+  harness.emit(session, TURN.start(1))
+
+  const read = () => harness.postExecute(session, { kind: 'accept' }, { name: 'read' })
+  await harness.postExecute(session, { kind: 'accept' }, { name: 'edit' })
+  harness.emit(session, modelMessage([{ type: 'text', text: 'Now the replay check in choose_nested:' }]))
+  harness.emit(session, modelMessage([{ type: 'text', text: '    Disclosure:\n    Done: Checked records.\n    Next: Compare mappings.\n    Approach: Read both lists.' }]))
+  assert.equal((await read()).additionalContexts, undefined, 'ordinary prose does not reset or send an early reminder')
+  harness.emit(session, modelMessage([{ type: 'text', text: 'Disclosure:\nDone: Checked replay.\nNext: Inspect the index.' }]))
+  assertNoticeShape(await read(), 0, null)
+
+  harness.emit(session, modelMessage([{ type: 'text', text: 'Continuing the investigation.' }]))
+  await read()
+  await read()
+  assertNoticeShape(await read(), 1, null)
+  harness.emit(session, modelMessage([{ type: 'text', text: 'ok' }]))
+  for (let call = 0; call < 3; call += 1) {
+    assert.equal((await read()).additionalContexts, undefined, 'ordinary prose cannot restore an exhausted budget')
+  }
+
+  const disclosure = modelMessage([
+    { type: 'text', text: '披露：\n已做：对照了回放记录，索引差异仍待确认。\n将做：检查奖励映射。\n做法：逐项比较原始索引与选择索引。' },
+    { type: 'tool-call', name: 'read' },
+  ])
+  for (let interval = 0; interval < 2; interval += 1) {
+    harness.emit(session, disclosure)
+    assert.equal((await read()).additionalContexts, undefined)
+    assert.equal((await read()).additionalContexts, undefined)
+    assertNoticeShape(await read(), 0)
+    await read()
+    await read()
+    assertNoticeShape(await read(), 1)
+  }
+})
+
+
+test('an inspection-only stretch adds objective activity context to the normal reminder', { skip }, async () => {
+  const harness = createHarness()
+  const session = { id: 'session-activity-inspect' }
+  host.apply(harness.ctx, { reminderAfterCalls: 3, maxReminders: 1, inspectionHintMinInspections: 3 })
+  harness.emit(session, TURN.start(1))
+
+  await harness.postExecute(session, { kind: 'accept' }, { name: 'read' })
+  await harness.postExecute(session, { kind: 'accept' }, { name: 'grep' })
+  const fact = 'The last 3 observed tool operations included 3 inspection/search tool operations and no mutation-oriented or verification-oriented tool operations by tool-name classification. If more investigation is still needed, identify the unresolved fact it is intended to settle.'
+  assertNoticeShape(
+    await harness.postExecute(session, { kind: 'accept' }, { name: 'search_code' }),
+    0,
+    fact,
+  )
+})
+
+test('nested native inspections enrich activity without advancing the disclosure cadence', { skip }, async () => {
+  const harness = createHarness()
+  const session = { id: 'session-activity-nested' }
+  host.apply(harness.ctx, { reminderAfterCalls: 2, maxReminders: 1, inspectionHintMinInspections: 5 })
+  harness.emit(session, TURN.start(1))
+
+  for (let call = 0; call < 5; call += 1) {
+    const decision = await harness.postExecute(
+      session,
+      { kind: 'accept' },
+      { name: 'read', parent: Symbol('run_code') },
+    )
+    assert.equal(decision.additionalContexts, undefined)
+  }
+
+  assert.equal((await harness.postExecute(session, { kind: 'accept' }, { name: 'run_code' })).additionalContexts, undefined)
+  const fact = 'The last 7 observed tool operations included 5 inspection/search tool operations and no mutation-oriented or verification-oriented tool operations by tool-name classification. If more investigation is still needed, identify the unresolved fact it is intended to settle.'
+  assertNoticeShape(
+    await harness.postExecute(session, { kind: 'accept' }, { name: 'run_code' }),
+    0,
+    fact,
+  )
+})
+
+test('a mutation-oriented operation suppresses the inspection-only activity suffix', { skip }, async () => {
+  const harness = createHarness()
+  const session = { id: 'session-activity-mutate' }
+  host.apply(harness.ctx, { reminderAfterCalls: 3, maxReminders: 1 })
+  harness.emit(session, TURN.start(1))
+
+  await harness.postExecute(session, { kind: 'accept' }, { name: 'read' })
+  await harness.postExecute(session, { kind: 'accept' }, { name: 'edit' })
+  assertNoticeShape(await harness.postExecute(session, { kind: 'accept' }, { name: 'grep' }))
+})
+
+test('disclosure preserves recent inspections while resetting reminder accounting', { skip }, async () => {
+  const harness = createHarness()
+  const session = { id: 'session-preserved-window' }
+  host.apply(harness.ctx, { reminderAfterCalls: 1, maxReminders: 1, activityWindowSize: 4, inspectionHintMinInspections: 2 })
+  harness.emit(session, TURN.start(1))
+  for (let i = 0; i < 2; i += 1) {
+    await harness.postExecute(session, { kind: 'accept' }, { name: 'read', parent: Symbol('run_code') })
+  }
+  const disclosure = modelMessage([{ type: 'text', text: 'Disclosure:\nDone: Compared records.\nNext: Check mapping.\nApproach: Read the index.' }])
+  harness.emit(session, disclosure)
+  const fact = 'The last 3 observed tool operations included 3 inspection/search tool operations and no mutation-oriented or verification-oriented tool operations by tool-name classification. If more investigation is still needed, identify the unresolved fact it is intended to settle.'
+  assertNoticeShape(await harness.postExecute(session, { kind: 'accept' }, { name: 'read' }), 0, fact)
+  assert.equal((await harness.postExecute(session, { kind: 'accept' }, { name: 'read' })).additionalContexts, undefined)
+  harness.emit(session, disclosure)
+  assertNoticeShape(await harness.postExecute(session, { kind: 'accept' }, { name: 'bash' }), 0,
+    'The last 4 observed tool operations included 3 inspection/search tool operations and no mutation-oriented or verification-oriented tool operations by tool-name classification. If more investigation is still needed, identify the unresolved fact it is intended to settle.')
+})
+
+test('edit followed by thirty reads regains a hint within the original reminder budget', { skip }, async () => {
+  const harness = createHarness()
+  const session = { id: 'session-edit-thirty-reads' }
+  host.apply(harness.ctx)
+  harness.emit(session, TURN.start(1))
+  await harness.postExecute(session, { kind: 'accept' }, { name: 'edit' })
+  for (let read = 1; read <= 30; read += 1) {
+    const decision = await harness.postExecute(session, { kind: 'accept' }, { name: 'search' })
+    if (read === 7) assertNoticeShape(decision, 0)
+    else if (read === 15) assertNoticeShape(decision, 1)
+    else if (read === 23) assertNoticeShape(decision, 2,
+      'The last 16 observed tool operations included 16 inspection/search tool operations and no mutation-oriented or verification-oriented tool operations by tool-name classification. If more investigation is still needed, identify the unresolved fact it is intended to settle.')
+    else assert.equal(decision.additionalContexts, undefined, `read ${read} does not create an extra reminder`)
+  }
+})
+
+test('a late parallel verification occupies the window until later observations evict it', { skip }, async () => {
+  const harness = createHarness()
+  const session = { id: 'session-observation-order' }
+  host.apply(harness.ctx, { reminderAfterCalls: 4, maxReminders: 2, activityWindowSize: 3, inspectionHintMinInspections: 2 })
+  harness.emit(session, TURN.start(1))
+  const gate = Promise.withResolvers()
+  const verification = harness.postExecute(session, { kind: 'accept' }, { name: 'test' }, { waitFor: gate.promise })
+  for (let i = 0; i < 3; i += 1) {
+    assert.equal((await harness.postExecute(session, { kind: 'accept' }, { name: 'read' })).additionalContexts, undefined)
+  }
+  gate.resolve()
+  assertNoticeShape(await verification, 0)
+  harness.emit(session, modelMessage([{ type: 'text', text: 'Disclosure:\nDone: Test failed.\nNext: Inspect inputs.\nApproach: Read the records.' }]))
+  for (let i = 0; i < 3; i += 1) {
+    assert.equal((await harness.postExecute(session, { kind: 'accept' }, { name: 'read' })).additionalContexts, undefined)
+  }
+  assertNoticeShape(await harness.postExecute(session, { kind: 'accept' }, { name: 'read' }), 0,
+    'The last 3 observed tool operations included 3 inspection/search tool operations and no mutation-oriented or verification-oriented tool operations by tool-name classification. If more investigation is still needed, identify the unresolved fact it is intended to settle.')
+})
+
+test('activity settings are validated on mount and zero capacity disables hints alone', { skip }, async () => {
+  assert.throws(() => host.apply(createHarness().ctx, { activityWindowSize: 4 }), /inspectionHintMinInspections.*activityWindowSize/)
+  assert.throws(() => host.apply(createHarness().ctx, { activityWindowSize: null }), /activityWindowSize/)
+  assert.throws(() => host.apply(createHarness().ctx, { inspectionHintMinInspections: null }), /inspectionHintMinInspections/)
+  const harness = createHarness()
+  const session = { id: 'session-disabled-hints' }
+  host.apply(harness.ctx, { activityWindowSize: 0 })
+  harness.emit(session, TURN.start(1))
+  for (let call = 1; call <= 8; call += 1) {
+    const decision = await harness.postExecute(session, { kind: 'accept' }, { name: 'read' })
+    if (call === 8) assertNoticeShape(decision, 0)
+    else assert.equal(decision.additionalContexts, undefined)
+  }
+})
+
+test('a failed nested verification remains in the window across disclosure', { skip }, async () => {
+  const harness = createHarness()
+  const session = { id: 'session-failed-verification' }
+  host.apply(harness.ctx, { reminderAfterCalls: 1, activityWindowSize: 4, inspectionHintMinInspections: 2 })
+  harness.emit(session, TURN.start(1))
+  const nested = { parent: Symbol('run_code') }
+  for (let i = 0; i < 2; i += 1) await harness.postExecute(session, { kind: 'accept' }, { ...nested, name: 'read' })
+  await harness.postExecute(session, { kind: 'accept' }, { ...nested, name: 'test' }, { result: { isError: true, content: [] } })
+  harness.emit(session, modelMessage([{ type: 'text', text: 'Disclosure:\nDone: Test failed.\nNext: Check inputs.\nApproach: Read records.' }]))
+  assertNoticeShape(await harness.postExecute(session, { kind: 'accept' }, { name: 'read' }), 0)
+})
+
+test('activity starts empty on a new turn and is not reconstructed on hot reload', { skip }, async () => {
+  const harness = createHarness()
+  const session = { id: 'session-window-lifecycle' }
+  host.apply(harness.ctx, { reminderAfterCalls: 1, inspectionHintMinInspections: 2 })
+  assert.equal((await harness.postExecute(session, { kind: 'accept' }, { name: 'read' })).additionalContexts, undefined)
+  harness.emit(session, TURN.start(1))
+  for (let i = 0; i < 2; i += 1) await harness.postExecute(session, { kind: 'accept' }, { name: 'read', parent: Symbol('run_code') })
+  harness.emit(session, TURN.end(1))
+  harness.emit(session, TURN.start(2))
+  assertNoticeShape(await harness.postExecute(session, { kind: 'accept' }, { name: 'read' }), 0)
 })
 
 test('nested calls do not count and a parallel step produces at most one notice', { skip }, async () => {

@@ -17,12 +17,24 @@ _Avoid_: approval gate, feedback cycle, steering request, 审批门, 反馈循�
 ### Information
 
 **Disclosure** (披露):
-Model-authored information about a running execution that helps a supervisor decide whether to intervene. Disclosure is best-effort communication, not a runtime guarantee or a substitute for task state.
+Model-authored information about recent work and its results or remaining uncertainty, the next intended action, and the intended approach that helps a supervisor decide whether to intervene during execution. Disclosure is best-effort communication, not a runtime guarantee or a substitute for task state.
 _Avoid_: report, progress update, narration, status, 汇报, 进度更新, 旁白
 
 **Silence interval** (静默区间):
-A span of execution in which the supervisor has seen no visible model text: it opens with a visible model message and closes when the next one arrives. Reminder cadence and the reminder budget are policy over this interval, so they reset with it rather than belonging to Disclosure itself.
+A span of execution between visible model messages in which the supervisor has seen no new visible model text.
 _Avoid_: timeout, watchdog window, 超时, 看门狗
+
+**Disclosure interval** (披露间隔):
+A span of execution between explicitly expressed disclosures; ordinary visible model text may occur within it. Visible speech alone does not establish that a disclosure has occurred.
+_Avoid_: silence interval, 静默区间
+
+**Activity hint** (活动提示):
+Factual context about the shape of recent observed tool activity that accompanies a request for disclosure. It is neither disclosure itself nor a judgment of productivity or semantic task progress.
+_Avoid_: progress judgment, productivity score, 进展判断, 生产力评分
+
+**Activity window** (活动窗口):
+The bounded portion of most recent observed tool activity within a turn used to ground an activity hint. Its contents advance with tool activity and remain independent of disclosure boundaries.
+_Avoid_: disclosure interval, activity interval, 披露间隔, 活动区间
 
 ### Baseline
 

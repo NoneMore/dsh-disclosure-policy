@@ -1,5 +1,43 @@
 # Verification record
 
+## Recent activity window: current checkout (2026-09-26)
+
+Verified ADR-0006 on the current branch with package version still `0.4.1` (unreleased changes). Review fixed point: `adae5e6d80e9eb05db97d5515a5531ba5a89f54a`.
+
+- TDD began with a failing public policy regression for an old edit/test leaving the window, followed by configuration and plugin-boundary cycles. Individual test files and typechecking ran throughout development.
+- `npm run build`, `npm run typecheck`, and final `npm test`: **48 passed, 0 failed, 0 skipped** (27 policy, 21 runtime).
+- Node syntax checks on both built JavaScript files and both test files, plus `git diff --check`: passed.
+- The default edit followed by 30 reads/searches regression delivers ordinary reminders at top-level calls 8/16 and an activity hint at call 24, then sends no extra notices after budget exhaustion.
+- Public tests cover partial windows, `other` eviction, configuration validation and hint-only disabling, preservation across disclosure (including failed nested verification), nested/composite observations, parallel observation order, and empty state on a new turn or hot reload.
+- Review against the recorded fixed point: Standards found no violations; Spec found an explicit `null` defaulting past activity validation. That finding was fixed with defaults applying only to omitted/`undefined` values and regressions at both agreed public boundaries; the Spec reviewer confirmed resolution.
+- `npm pack` and isolated real Web-profile installation/boot under DSH **0.1.7-rc.2**: passed. The composed row contains `reminderAfterCalls: 8`, `maxReminders: 3`, `activityWindowSize: 16`, and `inspectionHintMinInspections: 8`.
+
+The profile was `activity-review` under an isolated temporary `DSH_HOME`, with package cache and pnpm store in the same allowed temporary root. Commands matched the profile workflow below, using the new profile name. A hidden Node helper launched the CLI with telemetry disabled, `--no-open --port 0`, observed the loopback listen URL, confirmed an HTTP response (401 for an unauthenticated request), and terminated its child process. Boot validates mounting and defaults; no controlled live model turn or real-use tuning period was performed.
+
+## Structured disclosure: prior checkpoint (2026-09-26)
+
+Verified the ADR-0005 implementation on the current branch, with package version still `0.4.1` (unreleased changes):
+
+- `npm run build` and `npm run typecheck`: passed.
+- Individual policy/runtime file runs throughout TDD, then `npm test`: **39 passed, 0 failed, 0 skipped** (24 policy, 15 runtime).
+- `node --check` on both built JavaScript files and both test files: passed.
+- `git diff --check`: passed.
+- `npm pack --pack-destination <temp> --json`: passed; the packed artifact was installed into an isolated profile, whose composed row contained `disclosure-policy`, `reminderAfterCalls: 8`, and `maxReminders: 3`.
+- Real Web profile boot with globally installed DSH **0.1.7-rc.2**: loaded the packed plugin and listened at a loopback address. Telemetry was disabled and the browser was not opened. The created process tree was terminated after verification; termination required escalation because the Windows sandbox denied it.
+
+The isolated environment used a fresh directory under the allowed Windows temporary root for `DSH_HOME`, npm cache, pnpm store, package, and logs. Profile commands were:
+
+```powershell
+dsh --profile structured-review --from-default-profile web --dump-config
+dsh plugin --profile structured-review add <temp>/dsh-disclosure-policy-0.4.1.tgz --store-dir <temp>/pnpm-store
+dsh --profile structured-review --dump-config
+dsh --profile structured-review --no-open --port 0
+```
+
+The boot was launched as a hidden background Node process with output redirected to files. It validates packaging, mount, schema, and service startup. It does **not** establish that a real model will follow the format, provide useful contents, or reset at the right moment in a controlled live turn. Those structural/reset claims are covered by the public policy tests and the fake-host `apply()` harness, which also verifies that ordinary/malformed text preserves cadence, budget, and activity, while complete repeated disclosure resets all three.
+
+## Historical release checks
+
 Artifact build date: 2026-09-17. Package version: **0.4.0**.
 
 Re-verified for 0.4.0 (bounded repeat reminders; see `docs/adr/0004-bounded-repeat-reminders.md`):

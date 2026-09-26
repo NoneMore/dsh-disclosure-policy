@@ -1,5 +1,15 @@
 # Changelog
 
+## Unreleased
+
+- Ground activity hints in a configurable rolling window (`activityWindowSize: 16`, `inspectionHintMinInspections: 8`) independent of reminder cadence. Old edit/test operations stop suppressing hints once evicted; `other` and nested operations occupy window positions, and a partial window may qualify. Capacity `0` disables hints alone; invalid or unreachable configurations are rejected.
+- Preserve recent activity across recognized disclosure while resetting reminder accounting and budget. Hint wording identifies the actual recent window and inspection count. The existing reminder cadence and budget are unchanged. See ADR-0006.
+
+- Reset reminder accounting only on a complete model-authored four-line disclosure: `Disclosure / Done / Next / Approach` or `披露 / 已做 / 将做 / 做法`. Ordinary prose, malformed structures, mixed labels, quotations, and fenced or embedded examples do not reset calls or budget. Activity is independent of disclosure. Repeated or uninformative complete structures still qualify; recognition does not judge semantics.
+- Update the static policy and bounded reminders to ask for recent work and its result or uncertainty, the next action, and the intended operations or verification. Preserve the default 8-call cadence and 3-notice budget, with no deduplication, immediate malformed-format correction, tool denial, or forced continuation. See ADR-0005.
+- Add coarse activity-shape accounting alongside silence accounting. Nested native calls contribute activity even though they still do not advance the top-level silence cadence.
+- When a normal disclosure reminder is due after an inspection-only stretch, append an objective fact about the observed tool mix and ask which unresolved fact would justify further investigation. The hint does not add a new reminder cadence, parse shell commands, deny tools, or judge productivity.
+
 ## 0.4.1 - 2026-09-24
 
 - Adapt to DeepSeek Harness 0.1.7-rc.1.

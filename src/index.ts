@@ -4,19 +4,24 @@ import { createUserMessage, type ContextFormed, type UserMessage } from '@deepse
 import type { Session } from '@deepseek-ai/dsh-session'
 import type { PostToolDecision } from '@deepseek-ai/dsh-tools'
 import {
+  classifyToolActivity,
   countCompletedCall,
+  createActivity,
   createSilence,
   DEFAULT_CONFIG,
   DISCLOSURE_PLUGIN_NAME,
   DISCLOSURE_POLICY_ORDER,
   DISCLOSURE_POLICY_SECTION_NAME,
   DISCLOSURE_POLICY_TEXT,
+  inspectionActivityFact,
   isModelDisclosure,
   markReminderDelivered,
+  recordActivity,
   reminderTextFor,
   resetSilence,
   resolveConfig,
   withReminder,
+  type ActivityState,
   type SilenceState,
 } from './policy.js'
 
@@ -42,17 +47,28 @@ export interface Config {
    */
   reminderAfterCalls?: number
   /**
-   * Reminder budget for one silence interval: at most this many notices, one
+   * Reminder budget for one disclosure interval: at most this many notices, one
    * every `reminderAfterCalls` completed top-level calls. `1` is the historical
    * one-shot cadence; `0` disables runtime reminders. Default 3.
    */
   maxReminders?: number
+  /** Recent operations retained, including nested native tools; 0 disables hints alone. Default 16. */
+  activityWindowSize?: number
+  /** Minimum inspections in the activity window, independent of cadence. Default 8. */
+  inspectionHintMinInspections?: number
 }
 
 export const Config: z<Config> = z.object({
   reminderAfterCalls: z.number().step(1).min(0).default(DEFAULT_CONFIG.reminderAfterCalls),
   maxReminders: z.number().step(1).min(0).default(DEFAULT_CONFIG.maxReminders),
+  activityWindowSize: z.number().step(1).min(0).default(DEFAULT_CONFIG.activityWindowSize),
+  inspectionHintMinInspections: z.number().step(1).min(1).default(DEFAULT_CONFIG.inspectionHintMinInspections),
 })
+
+interface IntervalState {
+  silence: SilenceState
+  activity: ActivityState
+}
 
 const SOURCE = {
   kind: 'disclosure-policy' as const,
@@ -72,7 +88,7 @@ function notice(text: string): UserMessage {
  *
  * Two extension points only:
  *
- * - `session/event` maintains one turn-local silence interval per session from
+ * - `session/event` maintains one turn-local disclosure interval per session from
  *   first-party durable facts;
  * - `tools/post-execute` counts settled top-level calls and appends the due
  *   soft reminder as next-step context, at most `maxReminders` per interval.
@@ -85,22 +101,25 @@ function notice(text: string): UserMessage {
  */
 export function apply(ctx: Context, rawConfig: Config = {}): void {
   const config = resolveConfig(rawConfig)
-  const silences = new WeakMap<Session, SilenceState>()
+  const intervals = new WeakMap<Session, IntervalState>()
 
   ctx.on('session/event', (session, event) => {
     switch (event.type) {
       case 'turn/start':
-        silences.set(session, createSilence())
+        intervals.set(session, { silence: createSilence(), activity: createActivity(config.activityWindowSize) })
         return
       case 'turn/end':
-        silences.delete(session)
+        intervals.delete(session)
         return
       case 'assistant/message': {
-        const state = silences.get(session)
-        if (state === undefined) return
-        // Model-authored visible text opens a new interval. Reasoning blocks
-        // and plugin-authored messages are not disclosure and never reset it.
-        if (isModelDisclosure(event.data.message)) resetSilence(state)
+        const interval = intervals.get(session)
+        if (interval === undefined) return
+        // Only complete structured model disclosure opens a new interval.
+        // Ordinary prose, reasoning, and plugin context never reset it.
+        if (isModelDisclosure(event.data.message)) {
+          // Recent activity survives disclosure; only reminder accounting resets.
+          resetSilence(interval.silence)
+        }
         return
       }
       default:
@@ -124,30 +143,33 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
   // The soft reminders. They compose with downstream post-execute policy
   // (accept or block) rather than replacing it, and they never deny a call.
   ctx.on('tools/post-execute', async (exec, _result, next): Promise<PostToolDecision> => {
+    const interval = exec.agent === undefined ? undefined : intervals.get(exec.agent.session)
+    const observe = (): number | null => {
+      if (interval === undefined) return null
+      // Activity describes completed tool operations, including nested native
+      // dispatches. Disclosure cadence still counts top-level calls only.
+      recordActivity(interval.activity, classifyToolActivity(exec.name))
+      return countCompletedCall(interval.silence, config.reminderAfterCalls, config.maxReminders, {
+        nested: exec.parent !== undefined,
+      })
+    }
+
     let downstream: PostToolDecision
     try {
       downstream = await next()
     } catch (error) {
-      const state = exec.agent === undefined ? undefined : silences.get(exec.agent.session)
-      if (state !== undefined) {
-        // This boundary has no decision to carry additional context, so the
-        // call still advances the cadence but cannot spend a budget slot.
-        countCompletedCall(state, config.reminderAfterCalls, config.maxReminders, {
-          nested: exec.parent !== undefined,
-        })
-      }
+      // This boundary has no decision to carry additional context, so the call
+      // still advances both projections but cannot spend a reminder budget slot.
+      observe()
       throw error
     }
 
-    const state = exec.agent === undefined ? undefined : silences.get(exec.agent.session)
-    if (state === undefined) return downstream
-
-    const index = countCompletedCall(state, config.reminderAfterCalls, config.maxReminders, {
-      nested: exec.parent !== undefined,
-    })
+    if (interval === undefined) return downstream
+    const index = observe()
     if (index === null) return downstream
 
-    markReminderDelivered(state, state.calls, index)
-    return withReminder(downstream, notice(reminderTextFor(index)))
+    const activityFact = inspectionActivityFact(interval.activity, config.inspectionHintMinInspections)
+    markReminderDelivered(interval.silence, interval.silence.calls, index)
+    return withReminder(downstream, notice(reminderTextFor(index, activityFact)))
   })
 }

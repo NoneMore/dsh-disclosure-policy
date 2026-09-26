@@ -2,7 +2,7 @@
  * Pure disclosure policy.
  *
  * This module deliberately imports nothing from the host so the complete
- * behavior — silence accounting, reminder cadence, budget, and post-execute
+ * behavior — disclosure accounting, reminder cadence, budget, and post-execute
  * composition — can be unit-tested without the DeepSeek Harness dependency
  * graph. `index.ts` is only the adapter that binds these decisions to Cordis
  * extension points.
@@ -24,16 +24,52 @@ export interface DisclosureConfig {
      */
     reminderAfterCalls: number;
     /**
-     * Reminder budget for one silence interval: at most this many notices, one
+     * Reminder budget for one disclosure interval: at most this many notices, one
      * every `reminderAfterCalls` completed top-level calls, after which the
-     * interval stays silent until visible model text opens a new one. `1` is the
+     * interval gets no more reminders until structured disclosure opens a new one. `1` is the
      * historical one-shot cadence; `0` disables runtime reminders.
      */
     maxReminders: number;
+    /** Recent observed operations retained for activity hints; 0 disables hints alone. */
+    activityWindowSize: number;
+    /** Minimum inspections in the activity window, independent of reminder cadence. */
+    inspectionHintMinInspections: number;
 }
 export declare const DEFAULT_CONFIG: Readonly<DisclosureConfig>;
+export type ActivityKind = 'inspect' | 'mutate' | 'verify' | 'other';
+export interface ActivityState {
+    inspect: number;
+    mutate: number;
+    verify: number;
+    other: number;
+    readonly windowSize: number;
+    readonly operations: ActivityKind[];
+    next: number;
+}
+/** Bounded activity window, independent of disclosure intervals. */
+export declare function createActivity(windowSize?: number): ActivityState;
+/** Explicitly clear the activity window; disclosure does not call this helper. */
+export declare function resetActivity(state: ActivityState): ActivityState;
 /**
- * Resolve and validate the two behavioral options. The schema in `index.ts`
+ * Classify one tool by its structured name only.
+ *
+ * This intentionally stays conservative: generic shells and composite transports
+ * are `other`; their nested native tools can still contribute their own activity.
+ */
+export declare function classifyToolActivity(toolName: string): ActivityKind;
+/** Observe one operation, evicting the oldest when the window is full. */
+export declare function recordActivity(state: ActivityState, kind: ActivityKind): ActivityState;
+/**
+ * Objective context for an inspection-only stretch, or `null` when the shape
+ * is not notable enough to add to the normal disclosure reminder.
+ *
+ * The fact does not say the work is excessive or unproductive. It only reports
+ * the observed tool mix and asks the model to name the unresolved fact that
+ * justifies more investigation.
+ */
+export declare function inspectionActivityFact(state: ActivityState, minimumInspections: number): string | null;
+/**
+ * Resolve and validate behavioral options. The schema in `index.ts`
  * already rejects malformed DSH config rows; this second check keeps the pure
  * module authoritative and fails closed for direct callers.
  */
@@ -52,24 +88,22 @@ export interface MessageLike {
 /**
  * True when any visible `text` block carries a non-whitespace character.
  *
- * Reasoning blocks are not disclosure, and an empty or whitespace-only text
- * block is not a message the supervisor can read. Because this predicate is the
- * whole quality rule, a one-word acknowledgement resets the interval exactly
- * like a real disclosure; the runtime does not score semantics.
+ * Reasoning blocks and whitespace-only text are not visible speech. Visibility
+ * alone does not establish disclosure; see isModelDisclosure().
  */
 export declare function hasVisibleText(content: readonly ContentBlockLike[]): boolean;
 /**
- * True when one committed message opens a new silence interval: assistant text
- * authored by the routed model. Reasoning-only messages, tool results, and
- * plugin-authored context never reset the interval.
+ * True when committed model-authored visible text has the agreed disclosure
+ * structure. Recognition verifies expression only, never content quality.
  */
 export declare function isModelDisclosure(message: MessageLike): boolean;
 /**
- * One turn-local silence interval: a run of completed top-level tool calls with
- * no visible model text since it opened.
+ * One turn-local disclosure interval: completed top-level tool calls since the
+ * last recognized structured disclosure. The exported name is retained for
+ * compatibility with existing policy callers.
  *
  * The reminder budget belongs to this interval, so the interval — not the
- * individual reminder — is the unit that resets with visible model text.
+ * individual reminder — is the unit that resets with structured disclosure.
  */
 export interface SilenceState {
     /** Completed top-level tool calls since the interval opened. Never reset by a reminder. */
@@ -82,7 +116,7 @@ export interface SilenceState {
 /** `turn/start` initializes the interval. */
 export declare function createSilence(): SilenceState;
 /**
- * Open a new interval in place: visible model text (or a new turn) clears the
+ * Open a new interval in place: recognized disclosure (or a new turn) clears the
  * call count, the first-reminder anchor, and the delivered count, without
  * replacing the record.
  */
@@ -133,16 +167,17 @@ export declare const DISCLOSURE_POLICY_TEXT: string;
  * The one soft reminder, delivered as next-step context through
  * `tools/post-execute`.
  *
- * It asks for the same three answers as the standing policy in one or two
- * sentences. It is purely an instruction: no runtime fact row, no threat of
- * denial, no request for user input, and no chain-of-thought request.
+ * It asks for the same short structure as the standing policy. The base text
+ * is purely instructional; a caller may compose one
+ * objective activity fact beside it. Neither path threatens denial, requests
+ * user input, or asks for chain-of-thought.
  */
 export declare const DISCLOSURE_REMINDER_TEXT: string;
 /**
  * The one sentence that distinguishes a later reminder in the same interval.
  *
  * It states the bounded runtime fact the plugin actually observed — this
- * interval is a repeat reminder and still carries no visible model text. That is
+ * interval is a repeat reminder and still carries no structured disclosure. That is
  * verifiable and is information the model does not reliably have about itself,
  * which is what a repeat buys. "Repeat" labels the message, not the model's
  * conduct, so it stays true without accusing anyone.
@@ -151,10 +186,10 @@ export declare const DISCLOSURE_REMINDER_TEXT: string;
  * model how many notices remain would let it wait the cadence out and turn the
  * disclosure policy into a game.
  */
-export declare const DISCLOSURE_REPEAT_TEXT = "This is a repeat reminder: no visible disclosure has been sent in this stretch.";
+export declare const DISCLOSURE_REPEAT_TEXT = "This is a repeat reminder: no complete structured disclosure has been observed in this stretch.";
 /**
  * The reminder text for one budget slot: the first reminder in an interval is
  * {@link DISCLOSURE_REMINDER_TEXT} verbatim, and every later one appends
  * {@link DISCLOSURE_REPEAT_TEXT} without changing the request.
  */
-export declare function reminderTextFor(index: number): string;
+export declare function reminderTextFor(index: number, activityFact?: string | null): string;
