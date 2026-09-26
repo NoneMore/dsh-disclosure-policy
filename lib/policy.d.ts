@@ -20,7 +20,7 @@ export declare const DISCLOSURE_TOOL_DESCRIPTION = "Proactively update after fin
  */
 export declare const DISCLOSURE_POLICY_ORDER = 10150;
 export declare const DISCLOSURE_POLICY_SECTION_NAME = "plugin:disclosure-policy:policy";
-export declare const DISCLOSURE_POLICY_TEXT = "Proactively call `disclose_progress` at long-task milestones—key findings, phase/plan changes, verification results, blockers, or sustained work; do not wait for a reminder.";
+export declare const DISCLOSURE_POLICY_TEXT = "Proactively call `disclose_progress` at long-task milestones\u2014key findings, phase/plan changes, verification results, blockers, or sustained work; do not wait for a reminder.";
 export interface DisclosureConfig {
     /**
      * Completed top-level work calls that advance the reminder cadence by one
