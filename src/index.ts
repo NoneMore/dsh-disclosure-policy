@@ -66,8 +66,8 @@ interface IntervalState {
   silence: SilenceState
   activity: ActivityState
   step: number | null
+  stepTopLevelCalls: number
   pendingDisclosureStep: number | null
-  disclosedStep: number | null
   remindedStep: number | null
 }
 
@@ -112,8 +112,8 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
           silence: createSilence(),
           activity: createActivity(config.activityWindowSize),
           step: null,
+          stepTopLevelCalls: 0,
           pendingDisclosureStep: null,
-          disclosedStep: null,
           remindedStep: null,
         })
         return
@@ -121,8 +121,8 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
         const interval = intervals.get(session)
         if (interval === undefined) return
         interval.step = event.data.step
+        interval.stepTopLevelCalls = 0
         interval.remindedStep = interval.remindedStep === event.data.step ? interval.remindedStep : null
-        interval.disclosedStep = null
         interval.pendingDisclosureStep = event.data.message.content.some(block =>
           block.type === 'tool-call' && block.name === DISCLOSURE_TOOL_NAME)
           ? event.data.step
@@ -161,7 +161,11 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
       const interval = exec.agent === undefined ? undefined : intervals.get(exec.agent.session)
       if (interval !== undefined) {
         resetSilence(interval.silence)
-        interval.disclosedStep = interval.step
+        // A checkpoint resets the previous interval, but top-level sibling work
+        // already completed in this Assistant step must not disappear with it.
+        // Carry that work into the fresh interval; later siblings naturally keep
+        // advancing the same counter regardless of parallel settlement order.
+        interval.silence.calls = interval.stepTopLevelCalls
         interval.pendingDisclosureStep = interval.step
       }
       return null
@@ -186,12 +190,13 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
     const observe = (): number | null => {
       if (interval === undefined) return null
       recordActivity(interval.activity, classifyToolActivity(exec.name))
-      // A successful checkpoint makes every later settlement from the same model
-      // step part of the checkpoint boundary, regardless of parallel settlement
-      // order. Charge only work from a later model step to the fresh interval.
-      if (interval.step !== null && interval.disclosedStep === interval.step) return null
+      const nested = exec.parent !== undefined
+      if (!nested) interval.stepTopLevelCalls += 1
+      // Same-step top-level work always advances cadence. If a checkpoint settles
+      // later in this step, execute() re-anchors already observed siblings into
+      // the fresh interval; siblings settling afterwards keep incrementing it.
       return countCompletedCall(interval.silence, config.reminderAfterCalls, config.maxReminders, {
-        nested: exec.parent !== undefined,
+        nested,
       })
     }
 
