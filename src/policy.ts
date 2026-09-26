@@ -12,6 +12,16 @@ export const DISCLOSURE_PLUGIN_NAME = 'disclosure-policy'
 /** Model-facing progress action registered by the host adapter. */
 export const DISCLOSURE_TOOL_NAME = 'disclose_progress'
 
+/**
+ * The tool schema is the standing model-facing contract. Keep this short because
+ * it is present in every request that exposes the tool.
+ */
+export const DISCLOSURE_TOOL_DESCRIPTION =
+  'Report material progress with done, next, and approach; continue unless blocked. Use after findings, phases, or verification.'
+
+/** Legacy export retained for callers; no separate prompt section is installed. */
+export const DISCLOSURE_POLICY_TEXT = DISCLOSURE_TOOL_DESCRIPTION
+
 export interface DisclosureConfig {
   /**
    * Completed top-level work calls that advance the reminder cadence by one
@@ -116,7 +126,7 @@ export function inspectionActivityFact(state: ActivityState, minimumInspections:
   ) {
     return null
   }
-  return `The last ${state.operations.length} observed tool operations included ${state.inspect} inspection/search tool operations and no mutation-oriented or verification-oriented tool operations by tool-name classification. If more investigation is still needed, identify the unresolved fact it is intended to settle.`
+  return `Recent window: ${state.inspect}/${state.operations.length} inspection/search, 0 mutation/verification by tool-name classification. If investigating further, name the unresolved fact.`
 }
 
 /** Resolve and validate behavioral options. */
@@ -141,6 +151,53 @@ export function resolveConfig(input: Partial<DisclosureConfig> = {}): Disclosure
     throw new Error('disclosure-policy: inspectionHintMinInspections must not exceed activityWindowSize')
   }
   return Object.freeze({ reminderAfterCalls, maxReminders, activityWindowSize, inspectionHintMinInspections })
+}
+
+export interface ContentBlockLike {
+  readonly type: string
+  readonly text?: unknown
+}
+
+export interface MessageLike {
+  readonly role?: string
+  readonly source?: { readonly kind?: string }
+  readonly content: readonly ContentBlockLike[]
+}
+
+/**
+ * Legacy visibility helpers retained for API compatibility. Runtime disclosure
+ * accounting no longer uses Assistant prose recognition.
+ */
+export function hasVisibleText(content: readonly ContentBlockLike[]): boolean {
+  return content.some(block => block.type === 'text'
+    && typeof block.text === 'string'
+    && block.text.trim() !== '')
+}
+
+const LEGACY_DISCLOSURE_LABEL_SETS = [
+  ['Disclosure', 'Done', 'Next', 'Approach'],
+  ['披露', '已做', '将做', '做法'],
+] as const
+
+/** @deprecated Runtime disclosure is now the `disclose_progress` tool action. */
+export function isModelDisclosure(message: MessageLike): boolean {
+  if (message.role !== 'assistant' || message.source?.kind !== 'model') return false
+  const text = message.content
+    .filter(block => block.type === 'text' && typeof block.text === 'string')
+    .map(block => block.text)
+    .join('')
+  const rawLines = text.split(/\r\n|\n|\r/)
+  const first = rawLines.findIndex(line => line.trim() !== '')
+  if (first === -1) return false
+  const last = rawLines.findLastIndex(line => line.trim() !== '')
+  const lines = rawLines.slice(first, last + 1)
+  if (lines.length !== 4) return false
+  if (lines.every(line => /^(?: {4}| {0,3}\t)/.test(line))) return false
+  return LEGACY_DISCLOSURE_LABEL_SETS.some(labels => lines.every((line, index) => {
+    const field = /^([^:：]+)[:：](.*)$/.exec(line.trim())
+    if (field === null || field[1].trim() !== labels[index]) return false
+    return index === 0 ? field[2].trim() === '' : field[2].trim() !== ''
+  }))
 }
 
 /**
@@ -221,7 +278,7 @@ export function withReminder<TNotice, TDecision extends ReminderCarrier<TNotice>
  * so repeating field-format instructions here would spend tokens twice.
  */
 export const DISCLOSURE_REMINDER_TEXT =
-  '[disclosure] Call disclose_progress now with brief done, next, and approach fields, then continue autonomously if possible.'
+  '[disclosure] Call disclose_progress now with brief done, next, and approach; continue unless blocked.'
 
 export const DISCLOSURE_REPEAT_TEXT =
   'Repeat reminder: no disclose_progress call has been observed in this stretch.'
