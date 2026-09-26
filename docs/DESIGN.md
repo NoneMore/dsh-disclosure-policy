@@ -109,6 +109,8 @@ interface IntervalState {
   activity: ActivityState
   step: number | null
   remindedStep: number | null
+  pendingDisclosureStep: number | null
+  disclosedStep: number | null
 }
 ```
 
@@ -117,12 +119,12 @@ Lifecycle:
 | Event/action | Effect |
 |---|---|
 | `turn/start` | create fresh interval/activity state |
-| `assistant/message` | record only `data.step`; message text is ignored |
-| successful `disclose_progress` | reset reminder accounting; preserve activity |
+| `assistant/message` | record `data.step`; detect only a structured direct `disclose_progress` tool-call block; prose is ignored |
+| successful `disclose_progress` | reset reminder accounting; mark the whole current step as the checkpoint boundary; preserve activity |
 | ordinary completed tool | update activity; top-level call also advances cadence |
 | `turn/end` | discard turn-local state |
 
-The use of `assistant/message` is now purely identity/accounting, not prose interpretation.
+The use of `assistant/message` is identity/accounting plus structured tool-call detection, never prose interpretation. A direct progress attempt temporarily suppresses a same-step due reminder so success cannot race a stale notice; failure leaves the cadence overdue for the next step.
 
 ## Cadence
 
