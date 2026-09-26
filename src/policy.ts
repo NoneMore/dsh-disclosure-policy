@@ -17,7 +17,7 @@ export const DISCLOSURE_TOOL_NAME = 'disclose_progress'
  * it is present in every request that exposes the tool.
  */
 export const DISCLOSURE_TOOL_DESCRIPTION =
-  'Report material progress with done, next, and approach; continue unless blocked. Use after findings, phases, or verification.'
+  'Report material progress: done, next, and approach; continue unless blocked. Use after findings or verification.'
 
 /** Legacy export retained for callers; no separate prompt section is installed. */
 export const DISCLOSURE_POLICY_TEXT = DISCLOSURE_TOOL_DESCRIPTION
