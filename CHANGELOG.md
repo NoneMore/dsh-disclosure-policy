@@ -2,13 +2,12 @@
 
 ## Unreleased
 
-- Ground activity hints in a configurable rolling window (`activityWindowSize: 16`, `inspectionHintMinInspections: 8`) independent of reminder cadence. Old edit/test operations stop suppressing hints once evicted; `other` and nested operations occupy window positions, and a partial window may qualify. Capacity `0` disables hints alone; invalid or unreachable configurations are rejected.
-- Preserve recent activity across recognized disclosure while resetting reminder accounting and budget. Hint wording identifies the actual recent window and inspection count. The existing reminder cadence and budget are unchanged. See ADR-0006.
-
-- Reset reminder accounting only on a complete model-authored four-line disclosure: `Disclosure / Done / Next / Approach` or `披露 / 已做 / 将做 / 做法`. Ordinary prose, malformed structures, mixed labels, quotations, and fenced or embedded examples do not reset calls or budget. Activity is independent of disclosure. Repeated or uninformative complete structures still qualify; recognition does not judge semantics.
-- Update the static policy and bounded reminders to ask for recent work and its result or uncertainty, the next action, and the intended operations or verification. Preserve the default 8-call cadence and 3-notice budget, with no deduplication, immediate malformed-format correction, tool denial, or forced continuation. See ADR-0005.
-- Add coarse activity-shape accounting alongside silence accounting. Nested native calls contribute activity even though they still do not advance the top-level silence cadence.
-- When a normal disclosure reminder is due after an inspection-only stretch, append an objective fact about the observed tool mix and ask which unresolved fact would justify further investigation. The hint does not add a new reminder cadence, parse shell commands, deny tools, or judge productivity.
+- Replace Assistant-text disclosure with the structured `disclose_progress({ done, next, approach })` model tool. A successful call resets reminder accounting; ordinary Assistant prose no longer affects disclosure state. This removes the protocol ambiguity that allowed a progress-only Assistant response to terminate the turn. See ADR-0007.
+- Remove the standing disclosure system-prompt section and all turn-stopping steering. Keep legacy text-recognition helpers exported only for `./policy` compatibility.
+- Bound fixed context overhead: one compact tool description, three required string fields with no parameter descriptions, no successful result text, and short reminder/repeat strings. Tests enforce declaration/text size ceilings.
+- Support both native and PTC execution: nested PTC `disclose_progress` calls reset the interval while the enclosing `run_code` remains the next counted top-level call.
+- Fix the pre-existing parallel cadence gap by fencing reminder delivery with `assistant/message.data.step`: one model step can carry at most one reminder even if a large fan-out crosses several cadence periods.
+- Retain ADR-0006's rolling activity window across progress checkpoints. The progress tool itself is excluded from activity; the optional inspection-heavy suffix is shortened to one factual sentence.
 
 ## 0.4.1 - 2026-09-24
 
