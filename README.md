@@ -60,12 +60,13 @@ The progress tool itself does not advance reminder cadence and does not enter th
 Each turn starts a disclosure interval. Completed **top-level non-disclosure** tool calls advance the interval. By default:
 
 - the first reminder is due after **8** completed top-level calls;
-- at most **3** reminders are delivered before a progress checkpoint resets the interval;
+- repeat spacing backs off to **16**, **32**, then **64** additional calls and stays capped at 64;
+- there is **no total reminder limit**: a model that keeps working without a checkpoint continues to receive increasingly sparse reminders;
 - one Assistant step can receive at most **one** reminder, even if a large parallel fan-out crosses several cadence periods.
 
 A due reminder is attached through `tools/post-execute -> additionalContexts` and is seen on the next model step. It asks for a brief `disclose_progress` checkpoint and, when work remains, tells the model to batch it with the next work tool(s).
 
-A successful `disclose_progress` call resets the previous interval's cadence anchor and reminder budget. Recent activity is preserved. Top-level ordinary sibling calls from the same Assistant step are charged to the fresh interval regardless of whether they settle before or after the progress call, so batching a checkpoint with a large parallel fan-out does not create a free-work gap. Reminder delivery is still fenced to at most one notice per model step.
+A successful `disclose_progress` call resets the previous interval's cadence anchor and backoff state. Recent activity is preserved. Top-level ordinary sibling calls from the same Assistant step are charged to the fresh interval regardless of whether they settle before or after the progress call, so batching a checkpoint with a large parallel fan-out does not create a free-work gap. Reminder delivery is still fenced to at most one notice per model step.
 
 ## Activity hint
 
@@ -84,8 +85,8 @@ Shell/composite tools remain `other`; the plugin does not parse arbitrary comman
 
 | Option | Default | Meaning |
 |---|---:|---|
-| `reminderAfterCalls` | `8` | Top-level non-disclosure calls per reminder period. `0` disables reminders. |
-| `maxReminders` | `3` | Reminder budget per disclosure interval. `0` disables reminders. |
+| `reminderAfterCalls` | `8` | Top-level non-disclosure calls before the first reminder. `0` disables reminders. |
+| `maxReminderIntervalCalls` | `64` | Maximum spacing between repeat reminders after exponential backoff. Does not limit total reminders. |
 | `activityWindowSize` | `16` | Recent operations retained for the activity hint. `0` disables hints only. |
 | `inspectionHintMinInspections` | `8` | Minimum inspection/search operations required for the hint. |
 
@@ -95,12 +96,12 @@ Example patch override:
 - id: disclosure-policy
   config:
     reminderAfterCalls: 12
-    maxReminders: 2
+    maxReminderIntervalCalls: 96
     activityWindowSize: 24
     inspectionHintMinInspections: 12
 ```
 
-All values are validated as safe integers. A positive activity window must be at least as large as the inspection minimum.
+All values are validated as safe integers. When reminders are enabled, `maxReminderIntervalCalls` must be at least `reminderAfterCalls`. A positive activity window must be at least as large as the inspection minimum.
 
 ## What the plugin does not do
 
