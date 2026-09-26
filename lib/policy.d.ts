@@ -13,14 +13,14 @@ export declare const DISCLOSURE_TOOL_NAME = "disclose_progress";
  * The tool schema is the standing model-facing contract. Keep this short because
  * it is present in every request that exposes the tool.
  */
-export declare const DISCLOSURE_TOOL_DESCRIPTION = "Brief update after findings, phase/plan shifts, checks, blockers, or long work: done, next, approach; batch with work.";
+export declare const DISCLOSURE_TOOL_DESCRIPTION = "Proactively update after findings, plan shifts, checks, blockers, or long work: done, next, approach; batch with work.";
 /**
- * Historical prompt exports remain for policy-API compatibility. The host plugin
- * no longer mounts this section, so they add zero model-context cost.
+ * One-sentence standing instruction mounted for eligible native roots only.
+ * Keep this compact because it is fixed model context alongside the tool schema.
  */
 export declare const DISCLOSURE_POLICY_ORDER = 10150;
 export declare const DISCLOSURE_POLICY_SECTION_NAME = "plugin:disclosure-policy:policy";
-export declare const DISCLOSURE_POLICY_TEXT = "Brief update after findings, phase/plan shifts, checks, blockers, or long work: done, next, approach; batch with work.";
+export declare const DISCLOSURE_POLICY_TEXT = "Proactively call `disclose_progress` at long-task milestones—key findings, phase/plan changes, verification results, blockers, or sustained work; do not wait for a reminder.";
 export interface DisclosureConfig {
     /**
      * Completed top-level work calls that advance the reminder cadence by one

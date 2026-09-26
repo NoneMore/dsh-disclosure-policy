@@ -17,15 +17,16 @@ export const DISCLOSURE_TOOL_NAME = 'disclose_progress'
  * it is present in every request that exposes the tool.
  */
 export const DISCLOSURE_TOOL_DESCRIPTION =
-  'Brief update after findings, phase/plan shifts, checks, blockers, or long work: done, next, approach; batch with work.'
+  'Proactively update after findings, plan shifts, checks, blockers, or long work: done, next, approach; batch with work.'
 
 /**
- * Historical prompt exports remain for policy-API compatibility. The host plugin
- * no longer mounts this section, so they add zero model-context cost.
+ * One-sentence standing instruction mounted for eligible native roots only.
+ * Keep this compact because it is fixed model context alongside the tool schema.
  */
 export const DISCLOSURE_POLICY_ORDER = 10150
 export const DISCLOSURE_POLICY_SECTION_NAME = 'plugin:disclosure-policy:policy'
-export const DISCLOSURE_POLICY_TEXT = DISCLOSURE_TOOL_DESCRIPTION
+export const DISCLOSURE_POLICY_TEXT =
+  'Proactively call `disclose_progress` at long-task milestones—key findings, phase/plan changes, verification results, blockers, or sustained work; do not wait for a reminder.'
 
 export interface DisclosureConfig {
   /**

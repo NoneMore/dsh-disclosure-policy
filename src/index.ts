@@ -10,6 +10,9 @@ import {
   createSilence,
   DEFAULT_CONFIG,
   DISCLOSURE_PLUGIN_NAME,
+  DISCLOSURE_POLICY_ORDER,
+  DISCLOSURE_POLICY_SECTION_NAME,
+  DISCLOSURE_POLICY_TEXT,
   DISCLOSURE_TOOL_DESCRIPTION,
   DISCLOSURE_TOOL_NAME,
   inspectionActivityFact,
@@ -26,6 +29,7 @@ import {
 // Declaration-merging side effects keep current DSH event/service names typed.
 import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-session'
+import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
 
 declare module '@deepseek-ai/dsh-llm' {
@@ -98,6 +102,16 @@ function installForAgent(
   config: ReturnType<typeof resolveConfig>,
 ): void {
   let interval: IntervalState | undefined
+
+  // Keep the semantic cadence model-authored: this scoped standing instruction
+  // asks for proactive checkpoints, while runtime reminders remain a watchdog.
+  agentCtx.inject(['systemPrompt'], (scope) => {
+    scope.systemPrompt.section({
+      name: DISCLOSURE_POLICY_SECTION_NAME,
+      order: DISCLOSURE_POLICY_ORDER,
+      text: DISCLOSURE_POLICY_TEXT,
+    })
+  })
 
   agentCtx.on('session/event', (session, event) => {
     if (session !== agent.session) return
@@ -231,8 +245,8 @@ function isEligibleAgent(ctx: Context, agent: Agent): boolean {
  * `dsh-disclosure-policy` host plugin.
  *
  * The plugin is intentionally native-root-only. PTC/both agents and runtime
- * child agents receive no `disclose_progress` schema, no cadence state, and no
- * post-execute reminder listener.
+ * child agents receive no standing disclosure instruction, no `disclose_progress`
+ * schema, no cadence state, and no post-execute reminder listener.
  *
  * One global `agent/created` listener discovers future eligible roots. Each
  * eligible Agent owns the actual tool and observation listeners through

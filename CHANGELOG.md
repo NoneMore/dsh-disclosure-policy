@@ -3,8 +3,8 @@
 ## Unreleased
 
 - Replace Assistant-text disclosure with the structured `disclose_progress({ done, next, approach })` model tool. A successful call resets reminder accounting; ordinary Assistant prose no longer affects disclosure state. This removes the protocol ambiguity that allowed a progress-only Assistant response to terminate the turn. See ADR-0007.
-- Remove the standing disclosure system-prompt section and all turn-stopping steering. Keep legacy text-recognition helpers exported only for `./policy` compatibility.
-- Bound fixed context overhead: one compact tool description, three required string fields with no parameter descriptions, no successful result text, and short reminder/repeat strings. The description still names the semantic checkpoint moments (findings, phase/plan shifts, checks, blockers, long work), and whitespace-only fields are rejected in the executor without growing the schema. Tests enforce declaration/text size ceilings.
+- Keep turn-stopping steering removed, but add back one short Agent-scoped standing instruction for eligible native roots: proactively use `disclose_progress` at meaningful long-task milestones and do not wait for a reminder. Legacy text-recognition helpers remain compatibility-only.
+- Bound fixed context overhead: one short standing instruction, one compact proactive tool description, three required string fields with no parameter descriptions, no successful result text, and short reminder/repeat strings. Tests enforce per-surface and combined fixed-context size ceilings.
 - Limit the disclosure surface to exact-native main Agents. PTC/both Agents, live runtime-owned children, and cold-resumed sessions marked by subagent `origin` / positive `delegationDepth` receive no `disclose_progress` declaration, cadence state, or reminder listener. Eligibility combines live `AgentRegistry.roots()`, durable subagent lineage, and the Agent's effective ToolRuntime view after setup. See ADR-0008.
 - Keep the no-I/O checkpoint explicitly concurrency-safe so it does not become DSH's fail-closed exclusive scheduling barrier; when work remains, guidance asks an eligible native root to batch the checkpoint with the next work tool(s).
 - Fix checkpoint-step accounting so top-level ordinary siblings are carried into the fresh disclosure interval instead of disappearing when batched with `disclose_progress`; later same-step siblings keep advancing cadence while reminder delivery remains fenced to a later model step.
@@ -12,7 +12,7 @@
 - Replace the finite `maxReminders` budget with capped exponential backoff. Defaults now space reminders by 8, 16, 32, then 64 additional top-level calls and continue every 64 calls thereafter, so a silent model cannot permanently outwait the policy. See ADR-0009.
 - Remove `maxReminders` from current configuration and add `maxReminderIntervalCalls` (default `64`). `reminderAfterCalls: 0` is the single runtime-reminder disable switch; when enabled, the maximum interval must be at least the initial interval.
 - Retain ADR-0006's rolling activity window across progress checkpoints. The progress tool itself is excluded from activity; the optional inspection-heavy suffix is shortened to one factual sentence.
-- Drop the now-unused `dsh-system-prompt` direct peer/dev dependency. Keep `dsh-agent` as a direct peer/dev dependency because ADR-0008 uses the public live Agent registry for root/child identity.
+- Reintroduce the optional `dsh-system-prompt` peer/dev dependency solely for the eligible-root standing instruction; PTC/both and child Agents remain outside the disclosure surface.
 
 ## 0.4.1 - 2026-09-24
 
