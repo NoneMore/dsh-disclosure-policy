@@ -222,7 +222,7 @@ test('disclose_progress resets cadence and restores the reminder budget without 
   }
 })
 
-test('nested PTC disclose_progress also resets while the enclosing run_code counts once afterward', { skip }, async () => {
+test('nested PTC disclose_progress makes the whole run_code model step a checkpoint boundary', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'ptc-reset' }
   const parent = Symbol('run_code')
@@ -239,10 +239,73 @@ test('nested PTC disclose_progress also resets while the enclosing run_code coun
     approach: 'Let run_code finish, then verify.',
   }, { parent })
 
-  // The enclosing top-level transport is the first call after the reset.
+  // The enclosing top-level transport belongs to the same Assistant step as
+  // the nested checkpoint, so settlement order cannot charge it to the fresh interval.
   assert.equal((await harness.postExecute(session, { kind: 'accept' }, { name: 'run_code' })).additionalContexts, undefined)
 
   harness.emit(session, assistantStep(3))
+  assert.equal((await harness.postExecute(session, { kind: 'accept' }, { name: 'read' })).additionalContexts, undefined)
+  harness.emit(session, assistantStep(4))
+  assertNoticeShape(await harness.postExecute(session, { kind: 'accept' }, { name: 'read' }), 0)
+})
+
+test('native progress and parallel sibling tools form one settlement-order-independent checkpoint step', { skip }, async () => {
+  const harness = createHarness()
+  const session = { id: 'native-parallel-checkpoint' }
+  host.apply(harness.ctx, { reminderAfterCalls: 1, maxReminders: 1, activityWindowSize: 0 })
+  harness.emit(session, TURN.start(1))
+  harness.emit(session, assistantStep(1, [
+    { type: 'tool-call', name: DISCLOSURE_TOOL_NAME },
+    { type: 'tool-call', name: 'read' },
+  ]))
+
+  // A sibling settles first and reaches the threshold, but the committed
+  // Assistant message already contains a progress attempt, so no stale reminder
+  // is delivered before that attempt resolves.
+  assert.equal((await harness.postExecute(session, { kind: 'accept' }, { name: 'read' })).additionalContexts, undefined)
+
+  await disclose(harness, session, {
+    done: 'Checked the first file.',
+    next: 'Continue with the second file.',
+    approach: 'Read and compare it.',
+  })
+
+  // A sibling settling after the successful checkpoint is still part of the same
+  // model step and is not charged to the newly opened interval.
+  assert.equal((await harness.postExecute(session, { kind: 'accept' }, { name: 'search' })).additionalContexts, undefined)
+
+  harness.emit(session, assistantStep(2))
+  assertNoticeShape(await harness.postExecute(session, { kind: 'accept' }, { name: 'read' }), 0)
+})
+
+test('a failed direct progress attempt suppresses stale same-step reminders but does not reset accounting', { skip }, async () => {
+  const harness = createHarness()
+  const session = { id: 'failed-progress-attempt' }
+  host.apply(harness.ctx, { reminderAfterCalls: 1, maxReminders: 1, activityWindowSize: 0 })
+  harness.emit(session, TURN.start(1))
+  harness.emit(session, assistantStep(1, [
+    { type: 'tool-call', name: DISCLOSURE_TOOL_NAME },
+    { type: 'tool-call', name: 'read' },
+  ]))
+
+  // The ordinary sibling makes a reminder due, but delivery waits for the
+  // checkpoint attempt to settle.
+  assert.equal((await harness.postExecute(session, { kind: 'accept' }, { name: 'read' })).additionalContexts, undefined)
+
+  await assert.rejects(
+    harness.executeTool(session, DISCLOSURE_TOOL_NAME, { done: 'missing fields' }),
+    /required|next|approach/i,
+  )
+  // A failed progress dispatch is excluded from cadence and, crucially, did not
+  // execute the reset body.
+  assert.equal((await harness.postExecute(
+    session,
+    { kind: 'accept' },
+    { name: DISCLOSURE_TOOL_NAME },
+    { result: { isError: true, content: [], value: null } },
+  )).additionalContexts, undefined)
+
+  harness.emit(session, assistantStep(2))
   assertNoticeShape(await harness.postExecute(session, { kind: 'accept' }, { name: 'read' }), 0)
 })
 
