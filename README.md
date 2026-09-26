@@ -40,13 +40,17 @@ The redesign is intentionally **replacement, not accumulation**:
 
 Tests enforce size ceilings for the fixed model-facing declaration/reminder text and inspect the registered schema so accidental prompt growth fails CI.
 
-`deferLoading` is deliberately not used. Current DSH keeps explicitly deferred baseline tools inactive until a retained addition activates them; unsupported routes may still receive active declarations, and PTC still carries generated-SDK cost. Dynamic registration would also add tool-update/history churn. The fixed schema is intentionally tiny and reliably available from the start.
+`deferLoading` is deliberately not used. Eligibility is handled earlier by Agent-scoped registration: only an exact-native runtime root receives the tool at all, while PTC/both agents and runtime children receive no declaration or reminder listeners. Eligible native roots still get the same compact fixed schema.
 
-## Native and PTC modes
+## Runtime scope
 
-In **native** mode, `disclose_progress` is a normal tool call.
+The plugin is **native-root-only**:
 
-In **PTC** mode, it becomes a generated SDK binding and may execute as a nested call inside `run_code`. The plugin treats nested and native progress calls identically for disclosure accounting. DSH's conversation tool UI also projects PTC dispatch children, so the supervisor can inspect the atomic progress call even when its nested result is execution-local.
+- a top-level Agent whose effective tool presentation is exactly `native` receives `disclose_progress` plus cadence/activity listeners;
+- an Agent presenting `ptc` or `both` receives none of this plugin's model-facing or accounting surface;
+- a runtime child/subagent receives none of it, even when that child presents tools natively.
+
+Eligibility is sampled after Agent setup and before the first queued input is released. Hot reload also installs onto already-live eligible roots.
 
 The progress tool itself does not advance reminder cadence and does not enter the activity window.
 
@@ -56,7 +60,6 @@ Each turn starts a disclosure interval. Completed **top-level non-disclosure** t
 
 - the first reminder is due after **8** completed top-level calls;
 - at most **3** reminders are delivered before a progress checkpoint resets the interval;
-- nested ordinary tools do not advance cadence;
 - one Assistant step can receive at most **one** reminder, even if a large parallel fan-out crosses several cadence periods.
 
 A due reminder is attached through `tools/post-execute -> additionalContexts` and is seen on the next model step. It asks for a brief `disclose_progress` checkpoint and, when work remains, tells the model to batch it with the next work tool(s).
@@ -65,7 +68,7 @@ A successful `disclose_progress` call resets the previous interval's cadence anc
 
 ## Activity hint
 
-The plugin keeps a bounded rolling window of recent tool operations, including nested native calls. Tool names are classified coarsely as:
+The plugin keeps a bounded rolling window of recent tool operations for the eligible native root. Tool names are classified coarsely as:
 
 - `inspect`
 - `mutate`
@@ -109,8 +112,7 @@ The runtime only verifies that the model invoked the structured progress primiti
 - **A single long tool call is still silent.** DSH can inject reminders only at tool/step boundaries.
 - **The model can ignore reminders.** Disclosure remains best-effort.
 - **Content quality is not scored.** Structurally valid but vague/false checkpoints still reset the interval.
-- **Fixed declaration cost remains.** A model-visible tool is not free; this plugin minimizes rather than eliminates that cost.
-- **PTC presentation is nested.** The progress call appears under the `run_code` call unless a future client adds a dedicated top-level supervision surface.
+- **Eligible native roots still pay a fixed declaration cost.** PTC/both agents and runtime children pay no disclosure-tool schema cost because the tool is not registered in their scope.
 - **Hot reload does not reconstruct the current turn.** State begins again at the next observed `turn/start`.
 
 ## Install locally
