@@ -21,7 +21,7 @@ The registered model-facing schema is intentionally small:
 ```ts
 defineTool({
   name: 'disclose_progress',
-  description: 'Checkpoint long autonomous work: report done, next, and approach; then continue unless blocked.',
+  description: 'Brief update after findings, phase/plan shifts, checks, blockers, or long work: done, next, approach; batch with work.',
   parameters: {
     done: { type: 'string', required: true },
     next: { type: 'string', required: true },
