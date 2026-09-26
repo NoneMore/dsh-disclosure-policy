@@ -1,140 +1,186 @@
-# Design — one disclosure lane, no enforcement
+# Design — structured progress primitive, bounded reminders
 
-Design updated: 2026-09-26 (ADR-0005 and ADR-0006). Host-contract research snapshot: 2026-09-16. Supersedes the v0.2 two-lane freshness design.
+Design updated: 2026-09-26 (ADR-0007).
 
 ## Goal
 
-Keep a long DSH turn *legible to a supervisor* without turning the transcript into a tool-by-tool log, and without compelling the model.
+Keep long DSH turns legible to a supervisor without turning progress into a terminal Assistant response and without adding a large permanent prompt tax.
 
-The premise is a division of labour: the caller settles the goal, boundary, design, constraints, and verification method — the **execution brief** — and the human's job during execution is to observe and decide whether to intervene. The plugin's only job is to make long stretches without structured disclosure less likely: a standing obligation, plus a bounded reminder cadence while a disclosure interval stays long. The cadence is a nudge, not a guarantee: an interval that spends its whole budget receives no more reminders until structured disclosure.
+The plugin has two responsibilities only:
 
-## The single lane
+1. expose a compact model-authored progress primitive;
+2. nudge the model toward that primitive when a turn has gone too long without one.
 
-```text
-EXECUTION BRIEF (caller-supplied, not inspected)
-        |
-        v
-standing disclosure policy ......... systemPrompt.section(order 10150)
-        |
-        v
-structured model disclosure ......... opens a new disclosure interval
-        |
-        v
-completed top-level tool calls ...... advance the disclosure interval
-        |
-        +---- all completed tools ..... update coarse activity shape
-        |                              (nested native calls included)
-        v
-tools/post-execute .................. one reminder per cadence period,
-                                     optionally with objective activity context,
-                                     up to maxReminders per interval
-```
+It does not decide whether the work is good, truthful, complete, or blocked.
 
-There is still one reminder lane and no hard checkpoint: activity is context on that lane, not an independent trigger or budget. Native task accounting (`todo_write`) is a different concern owned by a different plugin; this one neither reads nor writes it.
-## Structural recognition
-
-Model-authored visible text is concatenated in content-block order, excluding reasoning and tool calls, and surrounding whitespace is trimmed. The complete text must be four lines: `Disclosure / Done / Next / Approach` or `披露 / 已做 / 将做 / 做法`, with `:` or `：` separators, an empty heading body, and three non-empty content fields. One label set must be used consistently and in order; fenced or indented code blocks, quotes, embedded examples, and extra prose do not qualify.
-
-The model describes recent work and its result or uncertainty, the next intended action, and concrete operations or verification. Openings and blockers may state honest absence of past work or a dependency with conditional follow-up. The runtime verifies the expression contract only: repeated complete structures reset, malformed ones wait for the normal reminder, and neither usefulness nor truth is reviewed. Exported `SilenceState`, `createSilence()`, and `resetSilence()` keep their historical names for API compatibility; their state now measures a disclosure interval.
-
-## Activity context: facts, not productivity judgments
-
-The runtime keeps a second, ephemeral projection: a rolling window of recent operations within the
-turn, preserved across disclosure boundaries (ADR-0006). Tool operations are classified from their
-structured names as `inspect`, `mutate`, `verify`, or `other`. This projection has different accounting
-from the reminder cadence:
-
-- **cadence** counts completed top-level calls, because a composite tool is still one opportunity for
-  the routed model to speak;
-- **activity** counts nested native calls too, because otherwise one composite dispatch could hide a
-  large inspection/search stretch;
-- generic shells and composite transports remain `other`; the policy does not parse arbitrary
-  command text or infer effects from it.
-
-The configurable window retains `activityWindowSize` recent observations (default 16), in actual
-post-execute observation order. All classified operations occupy a position, including `other`, nested
-native calls, and their enclosing composite call when observed. Old edit/test operations stop suppressing
-the hint once they leave the window. A partial window may qualify.
-
-The activity projection does not create its own reminder schedule. When an ordinary reminder is due,
-a window with at least `inspectionHintMinInspections` inspections (default 8) and no classified
-mutation/verification operation gets one factual suffix. `other` neither counts toward that minimum nor
-directly vetoes it. The suffix names the actual window size and inspection count and asks which
-unresolved fact further investigation would settle; it makes no productivity judgment.
-
-Both settings are independent of cadence and budget. They must be safe integers: capacity is
-non-negative, the minimum positive, and the minimum cannot exceed a positive capacity. Capacity 0
-disables hints alone and skips only that comparison. Every new turn starts empty; disclosure resets
-only reminder accounting. There is no history reconstruction or new durable state.
-
-This refines ADR-0003's distinction rather than replacing it: runtime facts may contextualize a request
-for **model-authored disclosure**, but the plugin still does not present those facts as the disclosure
-itself or synthesize a semantic progress report.
-
-## Event ordering used by the design
-
-DSH commits `assistant/message` before dispatching the tool calls that message requested. The plugin observes the committed message through `session/event`, so structured disclosure in a response and the tool calls of that same response compose cleanly:
+## Core protocol
 
 ```text
-callsSinceDisclosure = 7
-        |
-model replies with structured disclosure + tool-call in one response
-        |
-session/event: assistant/message with structured disclosure
-        |
-interval reset (calls = 0, firstReminderAt = null, delivered = 0)
-        |
-tools/post-execute for that call: count 1, no reminder
+model work
+   |
+   +-- read/search/edit/test/run_code ...
+   |
+   +-- disclose_progress({ done, next, approach })
+             |
+             +-- supervisor can inspect structured call
+             +-- reminder interval resets
+             +-- recent activity window remains
+             +-- normal agent tool loop continues
 ```
 
-Conversely, ordinary prose and tool-only responses leave the interval open; when it reaches a cadence period, the settling call carries that period's reminder.
+The important design boundary is:
 
-## Reminder path
+> **Progress is a tool action. Final prose is final prose.**
 
-On the call that reaches `reminderAfterCalls`, and again on every call `reminderAfterCalls` further along until `maxReminders` notices have been delivered, the running `tools/post-execute` listener prepends one plugin-sourced user-role context to `additionalContexts`. The first notice is the bare request; each later one appends the same repeat sentence, which states that this is a repeat reminder and that no complete structured disclosure was observed in the interval — and never how many remain, because publishing the budget would let the model wait the cadence out (ADR-0004).
+No Assistant-text recognizer participates in runtime accounting.
 
-The agent loop delivers the notice into the next-step inbox, so it becomes model-visible at the *next* step boundary and cannot alter the request already in flight.
+## Why this replaces the old four-line protocol
 
-The listener composes instead of replacing: it awaits `next()`, keeps whatever decision the downstream policy produced (`accept`, value-replacing `accept`, or `block`), and prepends its own context. This mirrors the shipped first-party `dsh-repeat-tool-reminder` and keeps the plugin compatible with result-transformers such as `dsh-spill-policy`.
+The previous design treated a complete four-line Assistant message as disclosure. That was deterministic to recognize, but not deterministic in lifecycle semantics. A provider may return `stop` after any ordinary Assistant response, so the model could satisfy the disclosure request and accidentally end the turn before its own `Next` action.
 
-If `next()` throws, the completed top-level call still advances the interval and the exception still propagates. A boundary that throws cannot carry `additionalContexts`, so it consumes no budget slot: the cadence anchor stays unset and the pending reminder is attached to the next downstream decision that returns normally.
+A stop-boundary steer can patch that symptom, but it cannot make Assistant prose intrinsically non-terminal.
 
-## Why there is no guard
+A tool call already has the correct lifecycle semantics: it is an action inside the agent loop. DSH executes it, records a result, and proceeds according to the normal tool loop. The progress primitive therefore removes the ambiguity rather than repairing it afterward.
 
-`ctx.tools.guard()` is a monotonic deny with no allow result. It is the right tool for a hard invariant, and the wrong tool for this one:
+## Model-facing surface and context budget
 
-- denial corrects the model's *style*, which was never the failure; the failure is the supervisor's blindness, and a denial does not cure blindness — it only makes the model talk;
-- a guard is tool-call enforcement, and ADR-0001 removes that mechanism from this plugin;
-- the reminder still needs `tools/post-execute` to deliver text, so a guard would add a second mechanism with no new capability.
+The model-facing surface is deliberately small:
 
-The plugin registers the two disclosure-accounting points plus one narrowly bounded stop-boundary repair from ADR-0007: `session/event`, `tools/post-execute`, and `agent/turn-stopping`. The test suite asserts zero guards and no `todo` listener, while separately proving that stop steering occurs only after a delivered reminder is satisfied by a standalone recognized disclosure, at most once per turn.
+```text
+name: disclose_progress
+description:
+  Checkpoint long autonomous work: report done, next, and approach;
+  then continue unless blocked.
 
-## Why the policy text is static
+parameters:
+  done: string
+  next: string
+  approach: string
+```
 
-The section carries no counters, no timestamps, and no per-turn state. The assembled system prompt is a `system`-role entry inside `messages`; a route that reads the latest `system` message (the in-history default) appends a full copy when the rendering changes, and every other route rewrites node 0 in place. Either way, volatile prompt text invalidates the cached prefix from an early token. `.scratch/research/prompt-cache-and-volatile-text.md` traces that path; the conclusion is that per-turn state belongs in appended context (`additionalContexts`), and standing obligations belong in a static section.
+There is no separate system-prompt section.
 
-## State model
+Parameter descriptions are omitted because the field names plus the one-line tool description are sufficient. Successful canonical output is `null`; the Native renderer emits no content blocks. The tool therefore does not repeat the checkpoint back into the model's next request.
 
-One mutable record per session, held in a `WeakMap` and discarded at `turn/end`:
+The ordinary reminder is likewise compact and names the tool rather than restating its schema.
+
+The test suite enforces:
+- a maximum description length;
+- a maximum reminder/repeat length;
+- a maximum serialized fixed tool declaration size;
+- no parameter descriptions;
+- empty successful result rendering.
+
+These are regression guards against prompt creep.
+
+### Why no `deferLoading`
+
+DSH preserves `deferLoading`, but an explicitly deferred baseline tool remains deferred until a retained addition activates it. This plugin needs its control primitive available from the beginning of the turn. PTC mode also carries a generated SDK representation, so deferred native declaration is not a universal context saving.
+
+The compact always-available schema is the safer trade.
+
+## Native and PTC presentation
+
+### Native mode
+
+`disclose_progress` is a top-level tool call. The call arguments are durable model-authored data and can be shown by generic tool presentation.
+
+### PTC mode
+
+Only `run_code` is directly callable. `disclose_progress` is a generated SDK binding and executes as a nested native dispatch.
+
+Nested calls still reach this plugin's executor and post-execute hooks, so interval reset semantics are identical.
+
+DSH's conversation tool UI projects PTC dispatch children and dispatches atomic calls through the normal tool-view slot. Thus a progress call can still be inspected under its parent `run_code` card. The nested result remains execution-local and is not duplicated into model context.
+
+A future client plugin may give `disclose_progress` a dedicated visual treatment without changing the host protocol.
+
+## State
+
+Each active turn owns one record:
 
 ```ts
-interface SilenceState {
-  calls: number                  // completed top-level calls since it opened
-  firstReminderAt: number | null // call count where the first reminder was delivered
-  delivered: number              // reminders delivered, and the budget index of the next
+interface IntervalState {
+  silence: {
+    calls: number
+    firstReminderAt: number | null
+    delivered: number
+  }
+  activity: ActivityState
+  step: number | null
+  remindedStep: number | null
 }
 ```
 
-`turn/start` replaces the record, which is also the only initialization point: a hot reload mid-turn starts accounting at the next `turn/start` rather than reconstructing history. `assistant/message` accepted by `isModelDisclosure()` calls `resetSilence()`, which clears `calls`, the anchor, and the delivered count in place — the interval, not the individual reminder, is the unit that restores the budget.
+Lifecycle:
 
-`countCompletedCall()` is the whole counting policy in one pure function: nested calls return immediately without touching the counter, a non-positive threshold or budget never reminds, and the returned index is selected from the delivered count, which guarantees at most one notice per cadence period regardless of how many calls settle in parallel. `markReminderDelivered()` is deliberately separate, so only a boundary that actually attached `additionalContexts` spends a slot.
+| Event/action | Effect |
+|---|---|
+| `turn/start` | create fresh interval/activity state |
+| `assistant/message` | record only `data.step`; message text is ignored |
+| successful `disclose_progress` | reset reminder accounting; preserve activity |
+| ordinary completed tool | update activity; top-level call also advances cadence |
+| `turn/end` | discard turn-local state |
 
-## What an uncooperative model costs
+The use of `assistant/message` is now purely identity/accounting, not prose interpretation.
 
-The plugin accepts that it may have no effect on a model that ignores both the standing policy and the whole reminder cadence. In exchange the policy surface is small and auditable: two listeners, four numeric options, one static prompt section, and no way to change what the model is allowed to do. ADR-0001 records that trade explicitly; ADR-0003's model-authored disclosure design still holds; ADR-0004 records why the reminder stopped being a one-shot.
+## Cadence
 
-Two limits are accepted rather than papered over. The budget is per interval and intervals are turn-local, so a model that keeps opening fresh turns is not covered. Only complete structured disclosure opens a new interval. Ordinary prose cannot reset it, but vague, repeated, or false complete structures still can; recognition does not score semantics (ADR-0005).
+`countCompletedCall()` counts top-level ordinary calls. Nested ordinary calls return before incrementing cadence.
 
-## Not in scope
+The first reminder is due at `reminderAfterCalls`. Later reminders are spaced by the same amount from the first delivered reminder, until `maxReminders` is spent.
 
-Runtime fact rows, semantic event classification (errors, subagents, plan transitions, slow tools), prose-quality scoring, execution-brief discovery, TODO freshness, custom durable events, a client projection, and any mid-run user decision while execution can continue.
+A reminder itself never resets the interval. Only a successful progress-tool invocation does.
+
+A downstream post-execute exception advances cadence but cannot carry `additionalContexts`, so it does not spend the reminder slot. The pending reminder can be attached at the next deliverable boundary.
+
+## One reminder per model step
+
+Counting calls alone is insufficient when one model step emits a large parallel fan-out. For example, 24 calls with cadence 8 can cross three periods before the model has seen even the first reminder.
+
+The adapter therefore remembers the current `assistant/message.data.step` and the step that already received a reminder.
+
+If another call in the same step is also overdue, the call count still advances, but the extra reminder is withheld and its budget slot is not spent. On a later model step, the next overdue reminder may be delivered immediately.
+
+This preserves the intended feedback loop:
+
+```text
+many parallel calls
+  -> one notice
+model gets a chance to react
+  -> later notice only if still needed
+```
+
+## Activity context
+
+Activity is independent of cadence.
+
+Every completed ordinary operation, including nested native calls, is classified from its structured tool name as `inspect`, `mutate`, `verify`, or `other`.
+
+`disclose_progress` is excluded from the activity window because it reports work rather than performing task work.
+
+A reminder may gain one compact factual suffix when:
+- the window contains at least `inspectionHintMinInspections` inspections;
+- no classified mutation operation is present;
+- no classified verification operation is present.
+
+The suffix reports the observed counts only. It does not say that investigation is excessive or that a mutation/test truly happened.
+
+## No stop steering and no guard
+
+The current design registers no `agent/turn-stopping` listener and no `ctx.tools.guard()`.
+
+A guard would enforce communication by denying task work. A stop steer would compensate for the old ambiguous Assistant-text protocol. Neither is necessary once progress is an explicit tool action.
+
+## Legacy API compatibility
+
+`hasVisibleText()`, `isModelDisclosure()`, and the historical prompt-order constants remain exported from `./policy` so existing importers do not fail immediately. They are compatibility helpers only and do not affect host-plugin behavior.
+
+## Residual limits
+
+- A model may ignore the tool and all reminders.
+- The tool declaration has a fixed context cost; it is minimized, not zero.
+- A single long blocking tool cannot be interrupted by this plugin.
+- Structural fields can still contain unhelpful or false prose.
+- Hot reload does not reconstruct an in-flight interval from history.
+- In PTC mode progress is visually nested under `run_code` unless a client adds a dedicated surface.
