@@ -366,6 +366,7 @@ export const DISCLOSURE_POLICY_TEXT = [
   '',
   DISCLOSURE_FORMAT_GUIDANCE,
   'Include any settled-plan or constraint change and anything worth the supervisor’s intervention in the relevant field.',
+  'A disclosure is a progress checkpoint, not a turn boundary. When executable work remains, keep the four disclosure lines as the only visible prose in that assistant message and issue the next necessary tool call(s) in the same message; do not end the turn merely to disclose.',
   '',
   'You do not need an opening preamble. Ask the user a question only when the execution brief does not let you continue; otherwise keep working and disclose. Never expose private chain-of-thought.',
 ].join('\n')
@@ -382,6 +383,7 @@ export const DISCLOSURE_POLICY_TEXT = [
 export const DISCLOSURE_REMINDER_TEXT = [
   '[disclosure] Before continuing this stretch of tool work, send a concise structured disclosure of recent work, the next action, and the approach, including anything worth the supervisor’s intervention.',
   DISCLOSURE_FORMAT_GUIDANCE,
+  'This disclosure is a progress checkpoint, not a turn boundary. When executable work remains, issue the next necessary tool call(s) in the same assistant message as the four disclosure lines; do not end the turn merely to satisfy this reminder.',
   'Then keep working autonomously whenever the execution brief lets you continue; do not wait for a reply unless you cannot proceed.',
 ].join('\n')
 
