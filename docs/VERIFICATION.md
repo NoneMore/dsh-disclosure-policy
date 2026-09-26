@@ -1,6 +1,20 @@
 # Verification record
 
-## Structured disclosure: current checkout (2026-09-26)
+## Recent activity window: current checkout (2026-09-26)
+
+Verified ADR-0006 on the current branch with package version still `0.4.1` (unreleased changes). Review fixed point: `adae5e6d80e9eb05db97d5515a5531ba5a89f54a`.
+
+- TDD began with a failing public policy regression for an old edit/test leaving the window, followed by configuration and plugin-boundary cycles. Individual test files and typechecking ran throughout development.
+- `npm run build`, `npm run typecheck`, and final `npm test`: **48 passed, 0 failed, 0 skipped** (27 policy, 21 runtime).
+- Node syntax checks on both built JavaScript files and both test files, plus `git diff --check`: passed.
+- The default edit followed by 30 reads/searches regression delivers ordinary reminders at top-level calls 8/16 and an activity hint at call 24, then sends no extra notices after budget exhaustion.
+- Public tests cover partial windows, `other` eviction, configuration validation and hint-only disabling, preservation across disclosure (including failed nested verification), nested/composite observations, parallel observation order, and empty state on a new turn or hot reload.
+- Review against the recorded fixed point: Standards found no violations; Spec found an explicit `null` defaulting past activity validation. That finding was fixed with defaults applying only to omitted/`undefined` values and regressions at both agreed public boundaries; the Spec reviewer confirmed resolution.
+- `npm pack` and isolated real Web-profile installation/boot under DSH **0.1.7-rc.2**: passed. The composed row contains `reminderAfterCalls: 8`, `maxReminders: 3`, `activityWindowSize: 16`, and `inspectionHintMinInspections: 8`.
+
+The profile was `activity-review` under an isolated temporary `DSH_HOME`, with package cache and pnpm store in the same allowed temporary root. Commands matched the profile workflow below, using the new profile name. A hidden Node helper launched the CLI with telemetry disabled, `--no-open --port 0`, observed the loopback listen URL, confirmed an HTTP response (401 for an unauthenticated request), and terminated its child process. Boot validates mounting and defaults; no controlled live model turn or real-use tuning period was performed.
+
+## Structured disclosure: prior checkpoint (2026-09-26)
 
 Verified the ADR-0005 implementation on the current branch, with package version still `0.4.1` (unreleased changes):
 

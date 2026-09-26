@@ -18,7 +18,6 @@ import {
   markReminderDelivered,
   recordActivity,
   reminderTextFor,
-  resetActivity,
   resetSilence,
   resolveConfig,
   withReminder,
@@ -53,11 +52,17 @@ export interface Config {
    * one-shot cadence; `0` disables runtime reminders. Default 3.
    */
   maxReminders?: number
+  /** Recent operations retained, including nested native tools; 0 disables hints alone. Default 16. */
+  activityWindowSize?: number
+  /** Minimum inspections in the activity window, independent of cadence. Default 8. */
+  inspectionHintMinInspections?: number
 }
 
 export const Config: z<Config> = z.object({
   reminderAfterCalls: z.number().step(1).min(0).default(DEFAULT_CONFIG.reminderAfterCalls),
   maxReminders: z.number().step(1).min(0).default(DEFAULT_CONFIG.maxReminders),
+  activityWindowSize: z.number().step(1).min(0).default(DEFAULT_CONFIG.activityWindowSize),
+  inspectionHintMinInspections: z.number().step(1).min(1).default(DEFAULT_CONFIG.inspectionHintMinInspections),
 })
 
 interface IntervalState {
@@ -101,7 +106,7 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
   ctx.on('session/event', (session, event) => {
     switch (event.type) {
       case 'turn/start':
-        intervals.set(session, { silence: createSilence(), activity: createActivity() })
+        intervals.set(session, { silence: createSilence(), activity: createActivity(config.activityWindowSize) })
         return
       case 'turn/end':
         intervals.delete(session)
@@ -112,8 +117,8 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
         // Only complete structured model disclosure opens a new interval.
         // Ordinary prose, reasoning, and plugin context never reset it.
         if (isModelDisclosure(event.data.message)) {
+          // Recent activity survives disclosure; only reminder accounting resets.
           resetSilence(interval.silence)
-          resetActivity(interval.activity)
         }
         return
       }
@@ -163,7 +168,7 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
     const index = observe()
     if (index === null) return downstream
 
-    const activityFact = inspectionActivityFact(interval.activity, config.reminderAfterCalls)
+    const activityFact = inspectionActivityFact(interval.activity, config.inspectionHintMinInspections)
     markReminderDelivered(interval.silence, interval.silence.calls, index)
     return withReminder(downstream, notice(reminderTextFor(index, activityFact)))
   })

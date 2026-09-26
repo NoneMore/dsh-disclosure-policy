@@ -28,6 +28,14 @@ _Avoid_: timeout, watchdog window, 超时, 看门狗
 A span of execution between explicitly expressed disclosures; ordinary visible model text may occur within it. Visible speech alone does not establish that a disclosure has occurred.
 _Avoid_: silence interval, 静默区间
 
+**Activity hint** (活动提示):
+Factual context about the shape of recent observed tool activity that accompanies a request for disclosure. It is neither disclosure itself nor a judgment of productivity or semantic task progress.
+_Avoid_: progress judgment, productivity score, 进展判断, 生产力评分
+
+**Activity window** (活动窗口):
+The bounded portion of most recent observed tool activity within a turn used to ground an activity hint. Its contents advance with tool activity and remain independent of disclosure boundaries.
+_Avoid_: disclosure interval, activity interval, 披露间隔, 活动区间
+
 ### Baseline
 
 **Execution brief** (执行简报):

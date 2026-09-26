@@ -1,6 +1,6 @@
 # Recognize an explicit disclosure structure before resetting reminders
 
-Status: accepted (2026-09-26). The user confirmed shared understanding and explicitly invoked the implementation phase; the runtime recognizer and model-facing policy now implement this decision.
+Status: accepted (2026-09-26), partly superseded by [ADR-0006](0006-recent-activity-hints.md) for activity accounting. The user confirmed shared understanding and explicitly invoked the implementation phase; the runtime recognizer and model-facing policy implement this decision. Structured disclosure now resets reminder accounting only; recent activity is preserved under ADR-0006.
 
 The supplied session export contains model-authored visible messages such as "Now the replay check in `choose_nested`:" that satisfied the previous reset predicate while providing no finding or investigation basis. The confirmed design direction is to replace the any-visible-text reset rule with an explicit model-authored disclosure structure checked deterministically, rather than adding a model call to judge prose.
 
@@ -26,7 +26,7 @@ The supplied session export contains model-authored visible messages such as "No
 - Support corresponding Chinese and English label sets with unrestricted prose language, using one label set consistently within a disclosure: `披露 / 已做 / 将做 / 做法` or `Disclosure / Done / Next / Approach`.
 - Incomplete structure does not reset accounting and does not trigger an additional immediate correction. Explain the required structure through the next normally due reminder within the existing cadence and budget.
 - Recognize a disclosure only when the entire visible text directly uses the agreed four-line structure, allowing surrounding whitespace, with all three content fields present and non-empty. Fenced or indented code blocks, blockquotes, and examples embedded in other prose do not qualify. The same assistant message may also contain tool calls. The fenced illustration in this document demonstrates the format; an actual model disclosure must be direct visible text without a fence.
-- Preserve the cadence: one reminder per eight completed top-level tool calls, with at most three delivered reminders per disclosure interval by default. A recognized structured disclosure resets the call count, reminder budget, and activity projection together; ordinary visible text resets none of these. Existing configuration and turn-local lifecycle remain in force.
+- Preserve the cadence: one reminder per eight completed top-level tool calls, with at most three delivered reminders per disclosure interval by default. A recognized structured disclosure resets the call count and reminder budget; the original joint activity reset is superseded by ADR-0006, which preserves the recent activity window. Ordinary visible text resets none of these. Existing turn-local lifecycle remains in force.
 - Reminder wording must describe the absence of a recognized structured disclosure, not assert the absence of all visible model text. "Silence interval" retains its literal meaning; "disclosure interval" names the interval for the proposed accounting.
 - Disclosure remains model-authored and best-effort. The existing no-guard, no-tool-denial, separate-task-accounting boundaries remain in force.
 

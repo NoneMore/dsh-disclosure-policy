@@ -34,11 +34,17 @@ export interface DisclosureConfig {
    * historical one-shot cadence; `0` disables runtime reminders.
    */
   maxReminders: number
+  /** Recent observed operations retained for activity hints; 0 disables hints alone. */
+  activityWindowSize: number
+  /** Minimum inspections in the activity window, independent of reminder cadence. */
+  inspectionHintMinInspections: number
 }
 
 export const DEFAULT_CONFIG: Readonly<DisclosureConfig> = Object.freeze({
   reminderAfterCalls: 8,
   maxReminders: 3,
+  activityWindowSize: 16,
+  inspectionHintMinInspections: 8,
 })
 
 export type ActivityKind = 'inspect' | 'mutate' | 'verify' | 'other'
@@ -48,6 +54,9 @@ export interface ActivityState {
   mutate: number
   verify: number
   other: number
+  readonly windowSize: number
+  readonly operations: ActivityKind[]
+  next: number
 }
 
 const OPEN_ACTIVITY = Object.freeze({ inspect: 0, mutate: 0, verify: 0, other: 0 })
@@ -62,14 +71,23 @@ const VERIFY_TOKENS = new Set([
   'acceptance', 'benchmark', 'build', 'check', 'lint', 'pytest', 'test', 'typecheck', 'validate', 'validation', 'verify',
 ])
 
-/** Coarse activity counters for one disclosure interval. */
-export function createActivity(): ActivityState {
-  return { ...OPEN_ACTIVITY }
+/** Bounded activity window, independent of disclosure intervals. */
+export function createActivity(windowSize = DEFAULT_CONFIG.activityWindowSize): ActivityState {
+  validateActivityWindowSize(windowSize)
+  return { ...OPEN_ACTIVITY, windowSize, operations: [], next: 0 }
 }
 
-/** Recognized disclosure opens a new activity interval alongside the reminder interval. */
+function validateActivityWindowSize(windowSize: number): void {
+  if (!Number.isSafeInteger(windowSize) || windowSize < 0) {
+    throw new Error('disclosure-policy: activityWindowSize must be a non-negative safe integer')
+  }
+}
+
+/** Explicitly clear the activity window; disclosure does not call this helper. */
 export function resetActivity(state: ActivityState): ActivityState {
   Object.assign(state, OPEN_ACTIVITY)
+  state.operations.length = 0
+  state.next = 0
   return state
 }
 
@@ -87,8 +105,16 @@ export function classifyToolActivity(toolName: string): ActivityKind {
   return 'other'
 }
 
-/** Count one completed tool operation in the current activity interval. */
+/** Observe one operation, evicting the oldest when the window is full. */
 export function recordActivity(state: ActivityState, kind: ActivityKind): ActivityState {
+  if (state.windowSize === 0) return state
+  if (state.operations.length === state.windowSize) {
+    state[state.operations[state.next]] -= 1
+    state.operations[state.next] = kind
+  } else {
+    state.operations.push(kind)
+  }
+  state.next = (state.next + 1) % state.windowSize
   state[kind] += 1
   return state
 }
@@ -110,24 +136,35 @@ export function inspectionActivityFact(state: ActivityState, minimumInspections:
   ) {
     return null
   }
-  return `This stretch has included ${state.inspect} inspection/search tool operations and no mutation-oriented or verification-oriented tool operations. If more investigation is still needed, identify the unresolved fact it is intended to settle.`
+  return `The last ${state.operations.length} observed tool operations included ${state.inspect} inspection/search tool operations and no mutation-oriented or verification-oriented tool operations by tool-name classification. If more investigation is still needed, identify the unresolved fact it is intended to settle.`
 }
 
 /**
- * Resolve and validate the two behavioral options. The schema in `index.ts`
+ * Resolve and validate behavioral options. The schema in `index.ts`
  * already rejects malformed DSH config rows; this second check keeps the pure
  * module authoritative and fails closed for direct callers.
  */
 export function resolveConfig(input: Partial<DisclosureConfig> = {}): DisclosureConfig {
   const reminderAfterCalls = input.reminderAfterCalls ?? DEFAULT_CONFIG.reminderAfterCalls
   const maxReminders = input.maxReminders ?? DEFAULT_CONFIG.maxReminders
+  const {
+    activityWindowSize = DEFAULT_CONFIG.activityWindowSize,
+    inspectionHintMinInspections = DEFAULT_CONFIG.inspectionHintMinInspections,
+  } = input
   if (!Number.isSafeInteger(reminderAfterCalls) || reminderAfterCalls < 0) {
     throw new Error('disclosure-policy: reminderAfterCalls must be a non-negative safe integer')
   }
   if (!Number.isSafeInteger(maxReminders) || maxReminders < 0) {
     throw new Error('disclosure-policy: maxReminders must be a non-negative safe integer')
   }
-  return Object.freeze({ reminderAfterCalls, maxReminders })
+  validateActivityWindowSize(activityWindowSize)
+  if (!Number.isSafeInteger(inspectionHintMinInspections) || inspectionHintMinInspections <= 0) {
+    throw new Error('disclosure-policy: inspectionHintMinInspections must be a positive safe integer')
+  }
+  if (activityWindowSize > 0 && inspectionHintMinInspections > activityWindowSize) {
+    throw new Error('disclosure-policy: inspectionHintMinInspections must not exceed activityWindowSize')
+  }
+  return Object.freeze({ reminderAfterCalls, maxReminders, activityWindowSize, inspectionHintMinInspections })
 }
 
 export interface ContentBlockLike {

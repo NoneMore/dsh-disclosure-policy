@@ -4,3 +4,5 @@
       config:
         reminderAfterCalls: 8
         maxReminders: 3
+        activityWindowSize: 16
+        inspectionHintMinInspections: 8

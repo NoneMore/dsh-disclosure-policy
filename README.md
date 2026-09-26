@@ -6,7 +6,7 @@ The plugin supports the human's job during execution — **supervision** — rat
 
 - a **standing policy** tells the model to keep working autonomously and to disclose briefly when there is material new information;
 - a **bounded soft reminder cadence** nudges the model again while a disclosure interval keeps producing tool calls, up to a fixed budget per interval;
-- an **activity-shape hint** can add objective context to that reminder when the interval has been dominated by inspection/search tools without any mutation- or verification-oriented tool call.
+- an **activity hint** can add objective context from a rolling window of recent tool operations, independently of disclosure boundaries.
 
 Disclosure is model-authored and best-effort. The plugin never denies a tool call, never rewrites task state, and never forces another step. See [`docs/adr/0001-supervision-over-enforcement.md`](docs/adr/0001-supervision-over-enforcement.md), [`docs/adr/0003-model-authored-disclosure.md`](docs/adr/0003-model-authored-disclosure.md), and [`docs/adr/0004-bounded-repeat-reminders.md`](docs/adr/0004-bounded-repeat-reminders.md).
 
@@ -44,29 +44,30 @@ The section is static: it carries no live counters and no per-turn state, so it 
 
 ## What the soft reminders do
 
-The runtime keeps one small state record per disclosure interval:
+The runtime keeps one small state record per turn, containing disclosure accounting and a separate activity window:
 
 ```text
 completed top-level calls since recognized structured disclosure
 call count where the first reminder was delivered
 reminders delivered in this interval
-coarse activity counts: inspect / mutate / verify / other
+recent activity window: inspect / mutate / verify / other
 ```
 
 Rules:
 
 - `turn/start` initializes the record; `turn/end` discards it.
-- A model-authored `assistant/message` whose entire visible text matches the four-line structure resets the call count, the first-reminder anchor, the delivered count, and activity, opening a new disclosure interval. Text blocks are concatenated in order; reasoning and tool-call blocks are excluded. Surrounding whitespace is ignored. Ordinary prose, incomplete structures, tool results, and plugin-authored messages do not reset it. Repeating a complete disclosure still resets it.
+- A model-authored `assistant/message` whose entire visible text matches the four-line structure resets the call count, the first-reminder anchor, and the delivered count, opening a new disclosure interval while preserving the activity window. Text blocks are concatenated in order; reasoning and tool-call blocks are excluded. Surrounding whitespace is ignored. Ordinary prose, incomplete structures, tool results, and plugin-authored messages do not reset accounting. Repeating a complete disclosure still resets it.
 - Each **completed top-level** tool call increments the call count, whether it succeeded, failed, was denied by another tool policy, or a downstream post-execute listener threw. If that exception prevents reminder delivery, the call still advances the cadence but does not spend a budget slot, so the reminder stays pending for the next deliverable boundary. Nested calls inside a composite tool (`exec.parent !== undefined`) do not count separately for cadence.
 - Every completed tool operation, including nested native calls, is also classified from its structured tool name as `inspect`, `mutate`, `verify`, or `other`. Generic shells/composite transports are deliberately `other`; the plugin does not parse arbitrary shell text.
-- When an ordinary reminder is due and the interval has at least `reminderAfterCalls` inspection/search operations but no mutation- or verification-oriented operation, the reminder adds that objective fact and asks the model to name the unresolved fact that would justify more investigation. This does **not** create an extra cadence or label the work as excessive.
+- The activity window retains the last `activityWindowSize` observed operations (default `16`), in post-execute observation order. Nested native operations and `other` operations each occupy a position, including the enclosing composite call when observed. Old operations leave when newer ones fill the window.
+- When an ordinary reminder is due and the window contains at least `inspectionHintMinInspections` inspection/search operations (default `8`) and no operation classified as mutation/verification, the reminder adds an objective hint. It states the actual window size and inspection count, then asks which unresolved fact further investigation would settle. A partial window can qualify. `other` occupies space but neither counts as inspection nor directly vetoes the hint. An old edit/test ceases to suppress the hint once it leaves the window. This creates no extra cadence or budget.
 - The first reminder is delivered on the call that reaches `reminderAfterCalls`; each later one is delivered `reminderAfterCalls` calls after that anchor, until `maxReminders` notices have been delivered for the interval. After the budget is spent no more notices are sent until recognized disclosure opens a new interval. Incomplete structures do not trigger an extra correction; the next normally due notice supplies the format.
 - The plugin appends each notice as one plugin-sourced context through `tools/post-execute` → `additionalContexts`, delivered on the next model step.
 - A parallel step crosses at most one cadence period, so it produces at most one reminder.
 - The reminder never resets the call count, so it keeps measuring the whole interval.
 - The notice is `createUserMessage` with `source: { kind: 'disclosure-policy', form: 'notice', summary }`, and it is prepended to whatever downstream post-execute decisions and contexts already exist.
 
-The reminder asks for the same concise four-line structure. An inspection-only interval can insert the objective activity fact described above, and every later reminder also states that no complete structured disclosure has been observed in this stretch. This does not claim that the model sent no ordinary text. It never states how many reminders remain, treats the activity fact as a progress judgment, threatens denial, requests user input, or asks for chain-of-thought.
+The reminder asks for the same concise four-line structure. A qualifying activity window can insert the objective hint described above, and every later reminder also states that no complete structured disclosure has been observed in this disclosure interval. This does not claim that the model sent no ordinary text. It never states how many reminders remain, treats the activity fact as a progress judgment, threatens denial, requests user input, or asks for chain-of-thought.
 
 ## Mechanism mapping
 
@@ -82,6 +83,10 @@ The reminder asks for the same concise four-line structure. An inspection-only i
 |---|---:|---|
 | `reminderAfterCalls` | `8` | Completed top-level calls per cadence period: the first reminder lands on this call, and each later one this many calls after it. `0` disables runtime reminders while keeping the standing policy. |
 | `maxReminders` | `3` | Reminder budget for one disclosure interval. `1` restores the historical one-shot cadence; `0` disables runtime reminders. |
+| `activityWindowSize` | `16` | Recent tool operations retained for activity hints, including nested native calls and `other`. `0` disables hints alone. |
+| `inspectionHintMinInspections` | `8` | Minimum inspection/search operations in the activity window. Independent of reminder cadence. |
+
+All options must be safe integers. Cadence, budget, and window capacity must be non-negative; the inspection minimum must be positive and must not exceed a positive window capacity. Capacity `0` skips only that comparison and leaves ordinary reminders working. Invalid configuration is rejected.
 
 There are no cadence tiers, exempt-tool list, fact-row mode, slow-tool threshold, prose-length threshold, or TODO settings.
 
@@ -92,6 +97,8 @@ A custom config row can look like:
   config:
     reminderAfterCalls: 12
     maxReminders: 2
+    activityWindowSize: 24
+    inspectionHintMinInspections: 12
 ```
 
 DSH patch rows replace the `config` value rather than deep-merging it. Both config layers re-fill omitted options from the plugin's hard-coded defaults, so a partial override reverts unlisted options to the defaults rather than to the values in `cordis.patch.yml`.
@@ -129,7 +136,7 @@ Replace `web` with your profile name if needed.
 
 ## Verification of the current checkout
 
-On 2026-09-26, build, typecheck, `npm test` (39 tests: 24 policy and 15 runtime), Node syntax checks, package inspection, and an isolated real Web-profile boot passed. The packed plugin loaded under DSH `0.1.7-rc.2` and the profile listened successfully; a controlled live model turn exercising the disclosure structure was not run. See [`docs/VERIFICATION.md`](docs/VERIFICATION.md) for commands and limits.
+On 2026-09-26, build, typecheck, `npm test` (48 tests: 27 policy and 21 runtime), Node syntax checks, package inspection, and an isolated real Web-profile boot passed. The packed plugin loaded under DSH `0.1.7-rc.2`, its composed row contained both activity settings, and the profile listened successfully. A controlled live model turn or period of real-use tuning was not run. See [`docs/VERIFICATION.md`](docs/VERIFICATION.md) for commands and limits.
 
 ## Development
 

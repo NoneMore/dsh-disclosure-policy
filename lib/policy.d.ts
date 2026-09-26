@@ -30,6 +30,10 @@ export interface DisclosureConfig {
      * historical one-shot cadence; `0` disables runtime reminders.
      */
     maxReminders: number;
+    /** Recent observed operations retained for activity hints; 0 disables hints alone. */
+    activityWindowSize: number;
+    /** Minimum inspections in the activity window, independent of reminder cadence. */
+    inspectionHintMinInspections: number;
 }
 export declare const DEFAULT_CONFIG: Readonly<DisclosureConfig>;
 export type ActivityKind = 'inspect' | 'mutate' | 'verify' | 'other';
@@ -38,10 +42,13 @@ export interface ActivityState {
     mutate: number;
     verify: number;
     other: number;
+    readonly windowSize: number;
+    readonly operations: ActivityKind[];
+    next: number;
 }
-/** Coarse activity counters for one disclosure interval. */
-export declare function createActivity(): ActivityState;
-/** Recognized disclosure opens a new activity interval alongside the reminder interval. */
+/** Bounded activity window, independent of disclosure intervals. */
+export declare function createActivity(windowSize?: number): ActivityState;
+/** Explicitly clear the activity window; disclosure does not call this helper. */
 export declare function resetActivity(state: ActivityState): ActivityState;
 /**
  * Classify one tool by its structured name only.
@@ -50,7 +57,7 @@ export declare function resetActivity(state: ActivityState): ActivityState;
  * are `other`; their nested native tools can still contribute their own activity.
  */
 export declare function classifyToolActivity(toolName: string): ActivityKind;
-/** Count one completed tool operation in the current activity interval. */
+/** Observe one operation, evicting the oldest when the window is full. */
 export declare function recordActivity(state: ActivityState, kind: ActivityKind): ActivityState;
 /**
  * Objective context for an inspection-only stretch, or `null` when the shape
@@ -62,7 +69,7 @@ export declare function recordActivity(state: ActivityState, kind: ActivityKind)
  */
 export declare function inspectionActivityFact(state: ActivityState, minimumInspections: number): string | null;
 /**
- * Resolve and validate the two behavioral options. The schema in `index.ts`
+ * Resolve and validate behavioral options. The schema in `index.ts`
  * already rejects malformed DSH config rows; this second check keeps the pure
  * module authoritative and fails closed for direct callers.
  */

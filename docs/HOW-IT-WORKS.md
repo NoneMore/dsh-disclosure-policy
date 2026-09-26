@@ -96,14 +96,16 @@ so a future edit that adds a guard, a `todo/write` listener, or a `turn-stopping
 |---|---|---|
 | `reminderAfterCalls` | `z.number().step(1).min(0)` | `8` |
 | `maxReminders` | `z.number().step(1).min(0)` | `3` |
+| `activityWindowSize` | `z.number().step(1).min(0)` | `16` |
+| `inspectionHintMinInspections` | `z.number().step(1).min(1)` | `8` |
 
 `resolveConfig()` in `src/policy.ts` re-validates the same rule (`Number.isSafeInteger && >= 0`) for both and throws `disclosure-policy: reminderAfterCalls must be a non-negative safe integer` or `disclosure-policy: maxReminders must be a non-negative safe integer` otherwise. The schema catches malformed DSH config rows before `apply`; the pure check keeps the policy module authoritative for direct callers and for the tests.
 
-Setting either option to `0` disables runtime reminders and leaves the standing policy installed. `maxReminders: 1` is the historical one-shot cadence. Those are the only two behavioral options; there are no cadence tiers, tool exemptions, or prose-length thresholds.
+Setting either reminder option to `0` disables runtime reminders and leaves the standing policy installed. `maxReminders: 1` is the historical one-shot cadence. The independent activity options must also be safe integers: capacity is non-negative, the minimum positive, and the minimum cannot exceed a positive capacity. `resolveConfig()` rejects violations on mount. Capacity `0` disables hints alone and skips only the size/minimum comparison. There are no cadence tiers, tool exemptions, or prose-length thresholds.
 
 ### The patch row's `config` replaces, it does not deep-merge
 
-DSH copies a patch's remaining top-level fields — including `config` — onto the matched row (`DSHROOT/dsh-app-boot/lib/index.js:59-105`), and both config layers re-fill omitted options from the plugin's hard-coded defaults. A partial override therefore reverts unlisted options to the defaults rather than inheriting `cordis.patch.yml`. With one option this is only a documentation concern, but the note stays because it is a real trap for future options.
+DSH copies a patch's remaining top-level fields — including `config` — onto the matched row (`DSHROOT/dsh-app-boot/lib/index.js:59-105`), and both config layers re-fill omitted options from the plugin's hard-coded defaults. A partial override therefore reverts unlisted options to the defaults rather than inheriting `cordis.patch.yml`. If a positive activity capacity is smaller than the default minimum of 8, explicitly lower the minimum too or validation rejects the configuration.
 
 ---
 
@@ -123,6 +125,9 @@ interface ActivityState {
   mutate: number
   verify: number
   other: number
+  readonly windowSize: number
+  readonly operations: ActivityKind[]
+  next: number
 }
 ```
 
@@ -133,7 +138,7 @@ Lifecycle:
 | Event | Effect |
 |---|---|
 | `turn/start` | creates fresh disclosure and activity projections |
-| `assistant/message` with recognized structured model disclosure | resets both projections |
+| `assistant/message` with recognized structured model disclosure | resets reminder accounting and budget, preserves activity window |
 | every `tools/post-execute` | classifies `exec.name` into activity; top-level calls also advance disclosure cadence |
 | `turn/end` | discards the interval |
 
@@ -224,7 +229,7 @@ return index
 
 The first reminder anchors the cadence at the threshold call, and each later one is due `reminderAfterCalls` calls after that anchor, which is why a parallel step crosses at most one period and yields at most one notice. Because the anchor is set by `markReminderDelivered` rather than by counting alone, a boundary that cannot deliver leaves the anchor unset and the cadence starts at the next boundary that can. The counter is never reset by a reminder, so it keeps measuring the interval until recognized structured model disclosure opens a new one.
 
-The returned index selects the base/repeat text. Before composition, `inspectionActivityFact()` may add one objective suffix when the interval contains at least `reminderAfterCalls` inspection/search operations and no mutation- or verification-oriented operation. The suffix reports the observed mix and asks which unresolved fact would justify more investigation; it does not create a new reminder or label the work as excessive. Index `0` still uses the base request, and any later index also appends `DISCLOSURE_REPEAT_TEXT` (ADR-0004).
+The returned index selects the base/repeat text. Before composition, `inspectionActivityFact()` may add one objective suffix when the recent activity window contains at least `inspectionHintMinInspections` inspections and no classified mutation/verification operation. `createActivity(config.activityWindowSize)` creates a bounded ring of observations; `recordActivity()` evicts the oldest type and adjusts its count when full. Nested calls and `other` occupy positions, and partial windows may qualify. Defaults are 16 recent operations and 8 inspections, independent of cadence. Capacity 0 disables hints alone. The suffix reports actual window length and inspection count; it creates no extra reminder or productivity judgment. Disclosure preserves the ring (ADR-0006). Index `0` uses the base request, and later indices also append `DISCLOSURE_REPEAT_TEXT` (ADR-0004).
 
 ### Composition
 
@@ -286,8 +291,8 @@ model sends ordinary prose and keeps calling tools  (8 more calls)
   -> calls = 16 -> second notice (index 1, repeat sentence appended)
 
 model's next step sees the notice and emits a complete structured disclosure plus a tool call
-  -> assistant/message with visible text -> resets disclosure accounting and activity
-  -> its tool call settles -> calls = 1 and starts the new activity mix
+  -> assistant/message with structured disclosure -> resets disclosure accounting, preserves activity
+  -> its tool call settles -> calls = 1 and advances the existing activity window
 
 turn/end
   -> state discarded

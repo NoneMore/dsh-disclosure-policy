@@ -24,12 +24,16 @@ import {
   withReminder,
 } from '../lib/policy.js'
 
-test('the two options default to 8/3 and 0 disables reminders', () => {
-  assert.deepEqual(resolveConfig(), { reminderAfterCalls: 8, maxReminders: 3 })
-  assert.deepEqual(DEFAULT_CONFIG, { reminderAfterCalls: 8, maxReminders: 3 })
-  assert.deepEqual(resolveConfig({ reminderAfterCalls: 0 }), { reminderAfterCalls: 0, maxReminders: 3 })
-  assert.deepEqual(resolveConfig({ reminderAfterCalls: 3, maxReminders: 1 }), { reminderAfterCalls: 3, maxReminders: 1 })
-  assert.deepEqual(resolveConfig({ maxReminders: 0 }), { reminderAfterCalls: 8, maxReminders: 0 })
+test('activity settings default to 16/8 independently of reminder cadence and budget', () => {
+  const defaults = { reminderAfterCalls: 8, maxReminders: 3, activityWindowSize: 16, inspectionHintMinInspections: 8 }
+  assert.deepEqual(resolveConfig(), defaults)
+  assert.deepEqual(DEFAULT_CONFIG, defaults)
+  assert.deepEqual(resolveConfig({ reminderAfterCalls: 0 }), { ...defaults, reminderAfterCalls: 0 })
+  assert.deepEqual(resolveConfig({ reminderAfterCalls: 3, maxReminders: 1 }), { ...defaults, reminderAfterCalls: 3, maxReminders: 1 })
+  assert.deepEqual(resolveConfig({ maxReminders: 0 }), { ...defaults, maxReminders: 0 })
+  assert.deepEqual(resolveConfig({ activityWindowSize: 4, inspectionHintMinInspections: 2 }), {
+    ...defaults, activityWindowSize: 4, inspectionHintMinInspections: 2,
+  })
 })
 
 test('a non-integer or negative option fails closed', () => {
@@ -109,6 +113,49 @@ test('only model-authored structured disclosure opens a disclosure interval', ()
     isModelDisclosure({ role: 'assistant', source: { kind: 'plugin', plugin: 'other' }, content: [{ type: 'text', text: 'notice' }] }),
     false,
   )
+})
+
+test('invalid activity configuration is rejected instead of making hints unreachable', () => {
+  for (const invalid of [null, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1, '8']) {
+    assert.throws(() => resolveConfig({ activityWindowSize: invalid }), /activityWindowSize/)
+    assert.throws(() => resolveConfig({ inspectionHintMinInspections: invalid }), /inspectionHintMinInspections/)
+  }
+  assert.throws(() => resolveConfig({ inspectionHintMinInspections: 0 }), /inspectionHintMinInspections/)
+  assert.throws(() => resolveConfig({ activityWindowSize: 4 }), /inspectionHintMinInspections.*activityWindowSize/)
+  assert.equal(resolveConfig({ activityWindowSize: 0 }).inspectionHintMinInspections, 8)
+  assert.throws(() => resolveConfig({ activityWindowSize: 0, inspectionHintMinInspections: 0 }), /inspectionHintMinInspections/)
+  assert.throws(() => createActivity(-1), /activityWindowSize/)
+})
+
+test('an old edit or test leaves the activity window after sixteen later inspections', () => {
+  for (const kind of ['mutate', 'verify']) {
+    const activity = createActivity()
+    recordActivity(activity, kind)
+    for (let i = 0; i < 15; i += 1) recordActivity(activity, 'inspect')
+    assert.equal(inspectionActivityFact(activity, 8), null)
+    recordActivity(activity, 'inspect')
+    assert.equal(
+      inspectionActivityFact(activity, 8),
+      'The last 16 observed tool operations included 16 inspection/search tool operations and no mutation-oriented or verification-oriented tool operations by tool-name classification. If more investigation is still needed, identify the unresolved fact it is intended to settle.',
+    )
+  }
+})
+
+test('other operations expire old inspections and a disabled window cannot qualify', () => {
+  const activity = createActivity(4)
+  for (let i = 0; i < 2; i += 1) recordActivity(activity, 'inspect')
+  assert.match(inspectionActivityFact(activity, 2), /last 2 observed tool operations included 2 inspection/)
+  for (let i = 0; i < 2; i += 1) recordActivity(activity, 'other')
+  assert.match(inspectionActivityFact(activity, 2), /last 4 observed tool operations included 2 inspection/)
+  recordActivity(activity, 'other')
+  assert.equal(inspectionActivityFact(activity, 2), null)
+  resetActivity(activity)
+  recordActivity(activity, 'inspect')
+  recordActivity(activity, 'inspect')
+  assert.match(inspectionActivityFact(activity, 2), /last 2 observed tool operations included 2 inspection/)
+  const disabled = createActivity(0)
+  for (let i = 0; i < 20; i += 1) recordActivity(disabled, 'inspect')
+  assert.equal(inspectionActivityFact(disabled, 1), null)
 })
 
 test('Chinese disclosure and honest opening or blocked disclosures satisfy the expression contract', () => {

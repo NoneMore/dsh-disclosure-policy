@@ -1,0 +1,19 @@
+# Ground activity hints in recent activity independently of disclosure
+
+Status: accepted (2026-09-26). The user confirmed shared understanding, explicitly invoked implementation, and confirmed the public policy API and plugin `apply()` test seams. The runtime implements this decision.
+
+The previous activity projection covered a whole disclosure interval: one mutation- or verification-oriented operation suppressed the inspection hint for the rest of that interval, even after a long later investigation. The user selected a bounded rolling activity window rather than whole-interval accounting or accumulation since the last mutation/verification, so the hint describes recent activity and old operations naturally leave the observation range.
+
+A recognized disclosure preserves this window while resetting reminder accounting and budget. Activity hints still accompany only an already-due ordinary reminder and share its existing budget; reminder design will be reconsidered after a period of real-use observation. This separates what the hint describes from when the reminder can be delivered without introducing another reminder lane.
+
+The window retains the latest 16 observed tool operations by default. A hint is eligible when that window contains at least 8 inspection/search operations by default and no operation classified as mutation- or verification-oriented. Both values are configurable independently of the reminder cadence: the user expects to tune them through real use. Mixed inspection/mutation or inspection/verification windows remain ineligible until those operations leave the window; introducing a ratio-based inspection-heavy condition is deferred.
+
+Unclassified `other` operations occupy window positions but neither count toward the inspection minimum nor directly veto eligibility. Nested native tool operations also occupy positions, as do their enclosing composite calls when observed; reminder cadence still counts only top-level calls. Classification continues to describe structured tool names, not actual effects or semantic progress.
+
+A partially populated window may qualify as soon as it reaches the configured inspection minimum; capacity is an upper bound, not a required sample size. Window order follows actual observation in `tools/post-execute`, including parallel completions; successful, failed, and denied calls all contribute their classified operation type. Each turn starts empty and discards the window at its end. Hot reload retains the existing next-turn initialization behavior without scanning session history.
+
+Hint wording identifies both the actual number of operations currently observed in the recent window and the inspection/search count, and describes the absence of classified mutation/verification operations only in that window. It does not imply a count since the latest disclosure, actual tool effects, or semantic progress. The request to identify the unresolved fact that further investigation would settle remains.
+
+The configuration exposes `activityWindowSize` (default `16`) and `inspectionHintMinInspections` (default `8`). Window capacity must be a non-negative safe integer and the inspection minimum a positive safe integer. When capacity is positive, the minimum must not exceed it; invalid configuration is rejected rather than silently making the hint unreachable. Capacity `0` disables activity hints alone, leaves ordinary disclosure reminders working, and skips only the comparison between capacity and minimum. Both values remain independent of `reminderAfterCalls` and `maxReminders`.
+
+This decision supersedes the joint activity/disclosure reset in ADR-0005 while retaining its structural recognition and reminder accounting. Reminder cadence and budget are intentionally unchanged pending a period of real-use observation.

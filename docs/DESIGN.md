@@ -1,6 +1,6 @@
 # Design — one disclosure lane, no enforcement
 
-Design updated: 2026-09-26 (ADR-0005). Host-contract research snapshot: 2026-09-16. Supersedes the v0.2 two-lane freshness design.
+Design updated: 2026-09-26 (ADR-0005 and ADR-0006). Host-contract research snapshot: 2026-09-16. Supersedes the v0.2 two-lane freshness design.
 
 ## Goal
 
@@ -39,9 +39,10 @@ The model describes recent work and its result or uncertainty, the next intended
 
 ## Activity context: facts, not productivity judgments
 
-The runtime now keeps a second, ephemeral projection over the same disclosure interval: completed
-tool operations are classified from their structured names as `inspect`, `mutate`, `verify`, or
-`other`. This projection deliberately has different accounting from the reminder cadence:
+The runtime keeps a second, ephemeral projection: a rolling window of recent operations within the
+turn, preserved across disclosure boundaries (ADR-0006). Tool operations are classified from their
+structured names as `inspect`, `mutate`, `verify`, or `other`. This projection has different accounting
+from the reminder cadence:
 
 - **cadence** counts completed top-level calls, because a composite tool is still one opportunity for
   the routed model to speak;
@@ -50,11 +51,21 @@ tool operations are classified from their structured names as `inspect`, `mutate
 - generic shells and composite transports remain `other`; the policy does not parse arbitrary
   command text or infer effects from it.
 
-The activity projection does not create its own reminder schedule. When the ordinary disclosure reminder
-is already due, an interval with at least `reminderAfterCalls` inspection/search operations and no
-mutation- or verification-oriented operation gets one factual suffix. The suffix reports the observed
-tool mix and asks which unresolved fact would justify more investigation. It does not say the model is
-stuck, overthinking, or unproductive.
+The configurable window retains `activityWindowSize` recent observations (default 16), in actual
+post-execute observation order. All classified operations occupy a position, including `other`, nested
+native calls, and their enclosing composite call when observed. Old edit/test operations stop suppressing
+the hint once they leave the window. A partial window may qualify.
+
+The activity projection does not create its own reminder schedule. When an ordinary reminder is due,
+a window with at least `inspectionHintMinInspections` inspections (default 8) and no classified
+mutation/verification operation gets one factual suffix. `other` neither counts toward that minimum nor
+directly vetoes it. The suffix names the actual window size and inspection count and asks which
+unresolved fact further investigation would settle; it makes no productivity judgment.
+
+Both settings are independent of cadence and budget. They must be safe integers: capacity is
+non-negative, the minimum positive, and the minimum cannot exceed a positive capacity. Capacity 0
+disables hints alone and skips only that comparison. Every new turn starts empty; disclosure resets
+only reminder accounting. There is no history reconstruction or new durable state.
 
 This refines ADR-0003's distinction rather than replacing it: runtime facts may contextualize a request
 for **model-authored disclosure**, but the plugin still does not present those facts as the disclosure
@@ -120,7 +131,7 @@ interface SilenceState {
 
 ## What an uncooperative model costs
 
-The plugin accepts that it may have no effect on a model that ignores both the standing policy and the whole reminder cadence. In exchange the policy surface is small and auditable: two listeners, two numbers, one static prompt section, and no way to change what the model is allowed to do. ADR-0001 records that trade explicitly; ADR-0003's model-authored disclosure design still holds; ADR-0004 records why the reminder stopped being a one-shot.
+The plugin accepts that it may have no effect on a model that ignores both the standing policy and the whole reminder cadence. In exchange the policy surface is small and auditable: two listeners, four numeric options, one static prompt section, and no way to change what the model is allowed to do. ADR-0001 records that trade explicitly; ADR-0003's model-authored disclosure design still holds; ADR-0004 records why the reminder stopped being a one-shot.
 
 Two limits are accepted rather than papered over. The budget is per interval and intervals are turn-local, so a model that keeps opening fresh turns is not covered. Only complete structured disclosure opens a new interval. Ordinary prose cannot reset it, but vague, repeated, or false complete structures still can; recognition does not score semantics (ADR-0005).
 
