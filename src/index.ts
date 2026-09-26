@@ -2,7 +2,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import z from '@deepseek-ai/schemastery'
 import { createUserMessage, type ContextFormed, type UserMessage } from '@deepseek-ai/dsh-llm'
 import type { Session } from '@deepseek-ai/dsh-session'
-import type { PostToolDecision } from '@deepseek-ai/dsh-tools'
+import { defineTool, type PostToolDecision } from '@deepseek-ai/dsh-tools'
 import {
   classifyToolActivity,
   countCompletedCall,
@@ -10,11 +10,9 @@ import {
   createSilence,
   DEFAULT_CONFIG,
   DISCLOSURE_PLUGIN_NAME,
-  DISCLOSURE_POLICY_ORDER,
-  DISCLOSURE_POLICY_SECTION_NAME,
-  DISCLOSURE_POLICY_TEXT,
+  DISCLOSURE_TOOL_DESCRIPTION,
+  DISCLOSURE_TOOL_NAME,
   inspectionActivityFact,
-  isModelDisclosure,
   markReminderDelivered,
   recordActivity,
   reminderTextFor,
@@ -26,9 +24,7 @@ import {
 } from './policy.js'
 
 // Declaration-merging side effects keep current DSH event/service names typed.
-import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-session'
-import type {} from '@deepseek-ai/dsh-system-prompt'
 import type {} from '@deepseek-ai/dsh-tools'
 
 declare module '@deepseek-ai/dsh-llm' {
@@ -41,17 +37,9 @@ export const name = DISCLOSURE_PLUGIN_NAME
 export const inject = ['tools']
 
 export interface Config {
-  /**
-   * Completed top-level tool calls that advance the reminder cadence by one
-   * position. `0` disables runtime reminders while keeping the standing policy.
-   * Default 8.
-   */
+  /** Completed top-level non-disclosure calls per reminder period. 0 disables reminders. Default 8. */
   reminderAfterCalls?: number
-  /**
-   * Reminder budget for one disclosure interval: at most this many notices, one
-   * every `reminderAfterCalls` completed top-level calls. `1` is the historical
-   * one-shot cadence; `0` disables runtime reminders. Default 3.
-   */
+  /** Reminder budget per disclosure interval. 0 disables reminders. Default 3. */
   maxReminders?: number
   /** Recent operations retained, including nested native tools; 0 disables hints alone. Default 16. */
   activityWindowSize?: number
@@ -69,54 +57,32 @@ export const Config: z<Config> = z.object({
 interface IntervalState {
   silence: SilenceState
   activity: ActivityState
-  reminderOutstanding: boolean
-  standaloneDisclosureAfterReminder: boolean
-  continuationUsed: boolean
 }
 
-const REMINDER_SOURCE = {
+const SOURCE = {
   kind: 'disclosure-policy' as const,
   form: 'notice' as const,
-  summary: 'Disclosure reminder',
+  summary: 'Progress checkpoint reminder',
 }
 
-const CONTINUATION_SOURCE = {
-  kind: 'disclosure-policy' as const,
-  form: 'notice' as const,
-  summary: 'Disclosure continuation',
-}
-
-const CONTINUE_AFTER_DISCLOSURE_TEXT = [
-  '[disclosure] The previous structured disclosure was a progress checkpoint, not a terminal response.',
-  'Continue the stated next action now if it is executable. If the task is complete or blocked, respond normally instead; do not emit another disclosure merely to satisfy this notice.',
-].join(' ')
-
-function notice(text: string, source = REMINDER_SOURCE): UserMessage {
+function notice(text: string): UserMessage {
   return createUserMessage({
     content: [{ type: 'text' as const, text }],
-    source,
+    source: SOURCE,
   })
 }
 
 /**
- * `dsh-disclosure-policy` host plugin.
+ * Host adapter.
  *
- * Three extension points:
+ * Disclosure is a model-authored structured tool action rather than Assistant
+ * prose. That removes the ambiguity between "progress update" and "terminal
+ * response": a successful disclose_progress call resets the interval and the
+ * agent naturally continues through the normal tool loop.
  *
- * - `session/event` maintains one turn-local disclosure interval per session from
- *   first-party durable facts;
- * - `tools/post-execute` counts settled top-level calls and appends the due
- *   soft reminder as next-step context, at most `maxReminders` per interval;
- * - `agent/turn-stopping` repairs one narrow failure mode: after a delivered
- *   reminder, a standalone structured disclosure must not accidentally become
- *   the terminal response while executable work was meant to continue.
- *
- * The standing policy is a static prompt section. No guard is registered and no
- * task state is read or written. Stop-boundary steering is bounded to one extra
- * step per turn and only after a reminder-triggered standalone disclosure:
- * see ADR-0001 and ADR-0003. The runtime keeps live projections instead of
- * scanning session history, which current DSH policy requires for new code; a
- * hot reload mid-turn therefore starts accounting at the next `turn/start`.
+ * Context cost stays bounded: no standing prompt section is installed, the tool
+ * declaration is intentionally compact, its successful result renders no model
+ * text, and reminders contain no format template.
  */
 export function apply(ctx: Context, rawConfig: Config = {}): void {
   const config = resolveConfig(rawConfig)
@@ -128,61 +94,46 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
         intervals.set(session, {
           silence: createSilence(),
           activity: createActivity(config.activityWindowSize),
-          reminderOutstanding: false,
-          standaloneDisclosureAfterReminder: false,
-          continuationUsed: false,
         })
         return
       case 'turn/end':
         intervals.delete(session)
         return
-      case 'assistant/message': {
-        const interval = intervals.get(session)
-        if (interval === undefined) return
-        // Any later model message proves that a previously standalone disclosure
-        // did not actually terminate the turn (for example, another plugin steered
-        // first), so a stale continuation candidate must not survive.
-        interval.standaloneDisclosureAfterReminder = false
-        // Only complete structured model disclosure opens a new interval.
-        // Ordinary prose, reasoning, and plugin context never reset accounting.
-        if (isModelDisclosure(event.data.message)) {
-          // A reminder-triggered disclosure that contains no tool call is the
-          // exact shape that can accidentally terminate a long autonomous turn.
-          // Remember only that narrow case for the turn-stopping boundary.
-          interval.standaloneDisclosureAfterReminder = interval.reminderOutstanding
-            && !event.data.message.content.some(block => block.type === 'tool-call')
-          interval.reminderOutstanding = false
-          // Recent activity survives disclosure; only reminder accounting resets.
-          resetSilence(interval.silence)
-        }
-        return
-      }
       default:
         return
     }
   })
 
-  // The prompt service is optional by design: `inject` is for hard
-  // requirements, so the capability is probed with ctx.get(). A deployment that
-  // installs a complete replacement prompt may suppress this section; the
-  // reminder keeps working.
-  const systemPrompt = ctx.get('systemPrompt')
-  if (systemPrompt !== undefined) {
-    ctx.effect(() => systemPrompt.section({
-      name: DISCLOSURE_POLICY_SECTION_NAME,
-      order: DISCLOSURE_POLICY_ORDER,
-      text: DISCLOSURE_POLICY_TEXT,
-    }))
-  }
+  ctx.tools.register(defineTool({
+    name: DISCLOSURE_TOOL_NAME,
+    description: DISCLOSURE_TOOL_DESCRIPTION,
+    parameters: {
+      done: { type: 'string', required: true },
+      next: { type: 'string', required: true },
+      approach: { type: 'string', required: true },
+    },
+    output: {
+      schema: { type: 'null' },
+      // The model already authored the useful information in the arguments.
+      // Returning no content avoids echoing it back into the next request.
+      render: () => [],
+    },
+    async execute(_args, exec) {
+      const interval = exec.agent === undefined ? undefined : intervals.get(exec.agent.session)
+      if (interval !== undefined) resetSilence(interval.silence)
+      return null
+    },
+  }))
 
-  // The soft reminders. They compose with downstream post-execute policy
-  // (accept or block) rather than replacing it, and they never deny a call.
   ctx.on('tools/post-execute', async (exec, _result, next): Promise<PostToolDecision> => {
     const interval = exec.agent === undefined ? undefined : intervals.get(exec.agent.session)
+
+    // disclose_progress is the boundary itself. It neither enters the activity
+    // window nor advances the cadence; its executor has already reset accounting.
+    if (exec.name === DISCLOSURE_TOOL_NAME) return await next()
+
     const observe = (): number | null => {
       if (interval === undefined) return null
-      // Activity describes completed tool operations, including nested native
-      // dispatches. Disclosure cadence still counts top-level calls only.
       recordActivity(interval.activity, classifyToolActivity(exec.name))
       return countCompletedCall(interval.silence, config.reminderAfterCalls, config.maxReminders, {
         nested: exec.parent !== undefined,
@@ -193,8 +144,6 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
     try {
       downstream = await next()
     } catch (error) {
-      // This boundary has no decision to carry additional context, so the call
-      // still advances both projections but cannot spend a reminder budget slot.
       observe()
       throw error
     }
@@ -205,25 +154,6 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
 
     const activityFact = inspectionActivityFact(interval.activity, config.inspectionHintMinInspections)
     markReminderDelivered(interval.silence, interval.silence.calls, index)
-    interval.reminderOutstanding = true
     return withReminder(downstream, notice(reminderTextFor(index, activityFact)))
-  })
-
-  // A standalone disclosure can satisfy the reminder yet also make the model
-  // return `stop`, which would otherwise close the turn before its stated Next
-  // action runs. Repair only that reminder-caused shape, and only once per turn.
-  // The continuation notice explicitly allows normal completion or blocking, so
-  // it does not require invented work and cannot create an unbounded loop.
-  ctx.on('agent/turn-stopping', ({ agent }) => {
-    const interval = intervals.get(agent.session)
-    if (
-      interval === undefined
-      || !interval.standaloneDisclosureAfterReminder
-      || interval.continuationUsed
-    ) return
-
-    interval.continuationUsed = true
-    interval.standaloneDisclosureAfterReminder = false
-    agent.steer(notice(CONTINUE_AFTER_DISCLOSURE_TEXT, CONTINUATION_SOURCE))
   })
 }
