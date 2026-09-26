@@ -16,53 +16,105 @@ try {
 
 const skip = unavailable === undefined ? false : unavailable
 
-function createHarness() {
-  const listeners = new Map()
+function createHarness({ mode = 'native', root = true } = {}) {
+  const globalListeners = new Map()
+  const scopedListeners = new Map()
   const guards = []
   const tools = new Map()
+  let currentSession = { id: 'unbound' }
+  let rootEnabled = root
 
-  const ctx = {
-    on(name, listener) {
-      const registered = listeners.get(name) ?? []
-      registered.push(listener)
-      listeners.set(name, registered)
-      return () => {}
+  const addListener = (map, name, listener) => {
+    const registered = map.get(name) ?? []
+    registered.push(listener)
+    map.set(name, registered)
+    return () => {
+      const index = registered.indexOf(listener)
+      if (index >= 0) registered.splice(index, 1)
+    }
+  }
+
+  const scopedTools = {
+    register(definition) {
+      tools.set(definition.name, definition)
+      return () => tools.delete(definition.name)
     },
-    tools: {
-      register(definition) {
-        tools.set(definition.name, definition)
-        return () => tools.delete(definition.name)
-      },
-      guard(guard) {
-        guards.push(guard)
-        return () => {}
-      },
+    get(name) {
+      if (name === 'run_code' && mode !== 'native') return { name: 'run_code' }
+      return tools.get(name)
+    },
+    guard(guard) {
+      guards.push(guard)
+      return () => {}
     },
   }
 
+  const agentCtx = {
+    on(name, listener) {
+      return addListener(scopedListeners, name, listener)
+    },
+    tools: scopedTools,
+  }
+
+  const agent = {
+    id: 'agent-1',
+    ctx: agentCtx,
+    get session() {
+      return currentSession
+    },
+  }
+
+  const agents = {
+    roots() {
+      return rootEnabled ? [agent] : []
+    },
+  }
+
+  const ctx = {
+    on(name, listener) {
+      return addListener(globalListeners, name, listener)
+    },
+    tools: {},
+    agents,
+  }
+
+  agentCtx.agents = agents
+
   return {
     ctx,
+    agent,
     guards,
     tools,
-    eventNames: () => [...listeners.keys()],
+    setRoot(value) {
+      rootEnabled = value
+    },
+    announce() {
+      for (const listener of globalListeners.get('agent/created') ?? []) {
+        listener({ agent, source: 'startup' })
+      }
+    },
+    eventNames: () => [...new Set([...globalListeners.keys(), ...scopedListeners.keys()])],
     emit(session, event) {
-      for (const listener of listeners.get('session/event') ?? []) listener(session, event)
+      currentSession = session
+      for (const listener of scopedListeners.get('session/event') ?? []) listener(session, event)
     },
     async executeTool(session, name, args, exec = {}) {
+      currentSession = session
       const tool = tools.get(name)
       assert.ok(tool, `registered tool ${name}`)
       return await tool.execute(args, {
         name,
-        agent: { session },
+        agent,
         signal: new AbortController().signal,
         ...exec,
       })
     },
     async postExecute(session, downstream = { kind: 'accept' }, exec = {}, options = {}) {
-      const execution = { name: 'bash', agent: { session }, ...exec }
+      currentSession = session
+      const execution = { name: 'bash', agent, ...exec }
       const result = options.result ?? { isError: false, content: [], value: null }
-      const registered = listeners.get('tools/post-execute') ?? []
-      assert.equal(registered.length, 1, 'exactly one post-execute listener')
+      const registered = scopedListeners.get('tools/post-execute') ?? []
+      assert.equal(registered.length, 1, 'exactly one scoped post-execute listener')
       return await registered[0](execution, result, async () => {
         if (options.waitFor !== undefined) await options.waitFor
         if (options.delayMs !== undefined) await new Promise(resolve => setTimeout(resolve, options.delayMs))
@@ -121,7 +173,7 @@ test('the plugin registers one compact progress tool and only two runtime listen
   const harness = createHarness()
   host.apply(harness.ctx, { reminderAfterCalls: 8 })
 
-  assert.deepEqual(harness.eventNames().sort(), ['session/event', 'tools/post-execute'])
+  assert.deepEqual(harness.eventNames().sort(), ['agent/created', 'session/event', 'tools/post-execute'])
   assert.equal(harness.guards.length, 0)
   assert.deepEqual([...harness.tools.keys()], [DISCLOSURE_TOOL_NAME])
 
@@ -136,6 +188,29 @@ test('the plugin registers one compact progress tool and only two runtime listen
     assert.equal(parameter.type, 'string')
     assert.equal(parameter.description, undefined)
   }
+})
+
+test('the disclosure surface is installed only for exact native runtime roots', { skip }, () => {
+  for (const mode of ['ptc', 'both']) {
+    const harness = createHarness({ mode })
+    host.apply(harness.ctx)
+    assert.deepEqual([...harness.tools.keys()], [], `${mode} root has no disclosure tool`)
+    assert.deepEqual(harness.eventNames(), ['agent/created'])
+  }
+
+  const child = createHarness({ root: false })
+  host.apply(child.ctx)
+  child.announce()
+  assert.deepEqual([...child.tools.keys()], [], 'runtime child has no disclosure tool')
+  assert.deepEqual(child.eventNames(), ['agent/created'])
+
+  const futureRoot = createHarness({ root: false })
+  host.apply(futureRoot.ctx)
+  assert.deepEqual([...futureRoot.tools.keys()], [])
+  futureRoot.setRoot(true)
+  futureRoot.announce()
+  assert.deepEqual([...futureRoot.tools.keys()], [DISCLOSURE_TOOL_NAME])
+  assert.deepEqual(futureRoot.eventNames().sort(), ['agent/created', 'session/event', 'tools/post-execute'])
 })
 
 test('the fixed model-facing declaration stays deliberately small and result text is empty', { skip }, async () => {
@@ -253,32 +328,6 @@ test('disclose_progress resets cadence and restores the reminder budget without 
   }
 })
 
-test('nested PTC disclose_progress counts the enclosing run_code in the fresh interval', { skip }, async () => {
-  const harness = createHarness()
-  const session = { id: 'ptc-reset' }
-  const parent = Symbol('run_code')
-  host.apply(harness.ctx, { reminderAfterCalls: 2, maxReminders: 1, activityWindowSize: 0 })
-  harness.emit(session, TURN.start(1))
-
-  harness.emit(session, assistantStep(1))
-  assert.equal((await harness.postExecute(session)).additionalContexts, undefined)
-
-  harness.emit(session, assistantStep(2))
-  await disclose(harness, session, {
-    done: 'Inspected nested calls.',
-    next: 'Continue the outer program.',
-    approach: 'Let run_code finish, then verify.',
-  }, { parent })
-
-  // The enclosing top-level transport is work performed after the checkpoint,
-  // so it starts consuming the fresh interval even though it settles in the
-  // same Assistant step. Reminder delivery itself remains fenced to a later step.
-  assert.equal((await harness.postExecute(session, { kind: 'accept' }, { name: 'run_code' })).additionalContexts, undefined)
-
-  harness.emit(session, assistantStep(3))
-  assertNoticeShape(await harness.postExecute(session, { kind: 'accept' }, { name: 'read' }), 0)
-})
-
 test('native progress and parallel sibling tools form one settlement-order-independent checkpoint step', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'native-parallel-checkpoint' }
@@ -369,10 +418,9 @@ test('a failed direct progress attempt suppresses stale same-step reminders but 
   assertNoticeShape(await harness.postExecute(session, { kind: 'accept' }, { name: 'read' }), 0)
 })
 
-test('a progress checkpoint preserves recent activity but is excluded from the activity window itself', { skip }, async () => {
+test('a progress checkpoint preserves recent native activity but is excluded from the activity window itself', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'preserve-activity' }
-  const parent = Symbol('run_code')
   host.apply(harness.ctx, {
     reminderAfterCalls: 1,
     maxReminders: 1,
@@ -388,7 +436,7 @@ test('a progress checkpoint preserves recent activity but is excluded from the a
     done: 'Compared records.',
     next: 'Check mapping.',
     approach: 'Read the index.',
-  }, { parent })
+  })
 
   harness.emit(session, assistantStep(1))
   const fact = 'Recent window: 3/3 inspection/search, 0 mutation/verification by tool-name classification. If investigating further, name the unresolved fact.'
@@ -423,29 +471,6 @@ test('a mutation-oriented operation suppresses the inspection suffix', { skip },
   await harness.postExecute(session, { kind: 'accept' }, { name: 'read' })
   await harness.postExecute(session, { kind: 'accept' }, { name: 'edit' })
   assertNoticeShape(await harness.postExecute(session, { kind: 'accept' }, { name: 'grep' }), 0, null)
-})
-
-test('nested ordinary tools enrich activity without advancing cadence', { skip }, async () => {
-  const harness = createHarness()
-  const session = { id: 'nested-activity' }
-  const parent = Symbol('run_code')
-  host.apply(harness.ctx, {
-    reminderAfterCalls: 2,
-    maxReminders: 1,
-    activityWindowSize: 8,
-    inspectionHintMinInspections: 5,
-  })
-  harness.emit(session, TURN.start(1))
-  harness.emit(session, assistantStep(1))
-
-  for (let i = 0; i < 5; i += 1) {
-    assert.equal((await harness.postExecute(session, { kind: 'accept' }, { name: 'read', parent })).additionalContexts, undefined)
-  }
-  assert.equal((await harness.postExecute(session, { kind: 'accept' }, { name: 'run_code' })).additionalContexts, undefined)
-
-  harness.emit(session, assistantStep(2))
-  const fact = 'Recent window: 5/7 inspection/search, 0 mutation/verification by tool-name classification. If investigating further, name the unresolved fact.'
-  assertNoticeShape(await harness.postExecute(session, { kind: 'accept' }, { name: 'run_code' }), 0, fact)
 })
 
 test('one model step can deliver at most one reminder even across several cadence periods', { skip }, async () => {
