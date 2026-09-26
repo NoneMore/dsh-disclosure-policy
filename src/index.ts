@@ -150,14 +150,7 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
       // result would duplicate context, so successful disclosure has no result text.
       render: () => [],
     },
-    // A disclosure is an ordering boundary: if the same model response also
-    // requests more tools, run this checkpoint alone in submission order before
-    // later work rather than racing it with the work it is describing.
-    isConcurrencySafe: () => false,
-    async execute(args, exec) {
-      if (args.done.trim() === '' || args.next.trim() === '' || args.approach.trim() === '') {
-        throw new Error('disclose_progress fields must be non-empty')
-      }
+    async execute(_args, exec) {
       const interval = exec.agent === undefined ? undefined : intervals.get(exec.agent.session)
       if (interval !== undefined) {
         resetSilence(interval.silence)
