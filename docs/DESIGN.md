@@ -69,7 +69,9 @@ The test suite enforces:
 - a maximum reminder/repeat length;
 - a maximum serialized fixed tool declaration size;
 - no parameter descriptions;
-- empty successful result rendering.
+- empty successful result rendering;
+- explicit `isConcurrencySafe: () => true`, because DSH otherwise schedules the checkpoint as exclusive;
+- guidance to batch the checkpoint with the next work tool(s) when work remains.
 
 These are regression guards against prompt creep.
 
@@ -77,7 +79,7 @@ These are regression guards against prompt creep.
 
 DSH preserves `deferLoading`, but an explicitly deferred baseline tool remains deferred until a retained addition activates it. This plugin needs its control primitive available from the beginning of the turn. PTC mode also carries a generated SDK representation, so deferred native declaration is not a universal context saving.
 
-The compact always-available schema is the safer trade.
+The compact always-available schema is the safer trade. Dynamic registration would also emit tool-update history and disturb request-prefix stability for a saving that is only a few hundred schema bytes.
 
 ## Native and PTC presentation
 
