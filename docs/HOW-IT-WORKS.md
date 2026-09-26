@@ -8,11 +8,12 @@ The plugin contributes:
 
 | Capability | DSH seam |
 |---|---|
-| structured progress primitive | `ctx.tools.register(defineTool(...))` |
-| turn lifecycle + model-step identity | `session/event` |
-| cadence/activity observation + reminder delivery | `tools/post-execute` |
+| root/native eligibility | global `agent/created` + `ctx.agents.roots()` + effective `run_code` visibility |
+| structured progress primitive | eligible `agent.ctx.tools.register(defineTool(...))` |
+| turn lifecycle + model-step identity | eligible Agent-scoped `session/event` |
+| cadence/activity observation + reminder delivery | eligible Agent-scoped `tools/post-execute` |
 
-It registers no guard, no turn-stopping listener, and no system-prompt section.
+It registers no guard, no turn-stopping listener, and no system-prompt section. PTC/both Agents and runtime children receive none of the three Agent-scoped contributions.
 
 ## 2. Progress tool
 
@@ -40,11 +41,11 @@ defineTool({
 
 The arguments are the model-authored disclosure. The successful result contains no model-facing text, avoiding an echo into the next request.
 
-The tool remains visible in native mode and becomes an SDK binding in PTC mode. DSH's tool conversation UI projects PTC dispatch children, so nested calls can still be inspected by the supervisor.
+The tool exists only in exact-native runtime roots. PTC/both Agents and runtime children do not receive a `disclose_progress` declaration or SDK binding.
 
 ## 3. Turn-local state
 
-A `WeakMap<Session, IntervalState>` is initialized only on `turn/start` and deleted on `turn/end`.
+Each eligible Agent scope owns one turn-local `IntervalState`, initialized on its `turn/start` and cleared on `turn/end`.
 
 State contains:
 - disclosure cadence/budget counters;
@@ -85,7 +86,7 @@ After the next Assistant message changes `step`, an overdue reminder can be deli
 
 ## 7. Activity hint
 
-All ordinary completed operations, including nested calls, enter the rolling activity window.
+All ordinary completed operations observed for the eligible native root enter the rolling activity window.
 
 Classification uses only the structured tool name. Generic shell/composite tools are `other`.
 
@@ -111,26 +112,25 @@ There is **no** standing disclosure prompt and no successful result echo.
 
 CI tests cap the fixed description/reminder sizes, inspect the schema for accidental parameter descriptions, and assert that successful rendering is empty.
 
-## 9. PTC details
+## 9. Eligibility details
 
-Under `mode: ptc`, only `run_code` is a direct model tool; other visible tools become generated SDK bindings. `disclose_progress` can therefore be nested.
+Eligibility combines live runtime ownership, durable subagent lineage, and the Agent's effective tool presentation.
 
-Nested calls:
-- do execute the progress tool's reset logic;
-- do not advance cadence themselves;
-- are visible as PTC subcalls in the conversation tool projection;
-- do not inject a separate successful result into model history.
+- `ctx.agents.roots()` identifies live top-level Agents and excludes currently owned runtime children.
+- `SessionHeader.origin === 'subagent'` or `delegationDepth > 0` excludes cold-resumed subagent sessions that no longer have a live parent owner. Generic `parentSession`/fork lineage is intentionally not enough.
+- `agent.ctx.tools.get('run_code', agent)` is absent only for exact `native` presentation. Both `ptc` and `both` expose the reserved transport and are excluded.
+- `agent/created` runs after Agent setup and before queued input is released, so preset/scoped presentation has already been composed when the plugin samples eligibility.
+- Registrations are made through `agent.ctx`, so the tool and listeners are Agent-local and unwind when that Agent is disposed.
 
-This is why the same primitive works without a native-only assumption.
+Eligibility is sampled at Agent creation, or when this plugin mounts over already-live roots. Mid-lifecycle presentation-mode mutation is not a supported transition for this plugin; reload or recreate the Agent after changing presentation.
 
 ## 10. Known limitations
 
 - No reminder can interrupt one long-running tool.
 - A model may ignore `disclose_progress`.
 - Field quality is not judged.
-- Tool schema context cost is non-zero.
-- PTC progress appears nested unless a client plugin adds dedicated presentation.
-- Hot reload starts accounting at the next `turn/start`; no history reconstruction is performed.
+- Eligible native roots still pay the compact tool-schema context cost.
+- Hot reload starts accounting at the next observed `turn/start`; no in-flight interval is reconstructed.
 
 ## 11. Relevant DSH contracts
 
@@ -138,9 +138,11 @@ Primary upstream contracts used by this design:
 
 - `defineTool()` validates typed parameters and canonical output.
 - tool schemas are model-visible; output declarations/executors are not.
-- `tools/post-execute` can append `additionalContexts`.
-- `ToolExecution.parent` identifies nested PTC dispatches.
+- `AgentRegistry.roots()` identifies current live ownership; durable `SessionHeader.origin` / `delegationDepth` separately preserve subagent lineage across cold resume.
+- `agent/created` runs after setup; Agent-scoped registrations through `agent.ctx` exist only for that Agent and unwind on disposal.
+- ToolRuntime's public `get(name, scope)` resolves the effective scoped view; reserved `run_code` is present for non-native presentation.
+- Agent-scoped `session/event` and `tools/post-execute` listeners receive only that Agent's work.
 - `assistant/message` is durable before that response's tool calls run.
-- PTC mode exposes generated SDK bindings and the Web tool UI projects PTC dispatch children.
+- `tools/post-execute` can append `additionalContexts`.
 
-See [SOURCES.md](SOURCES.md) for the audited links and [ADR-0007](adr/0007-structured-progress-tool.md) for the design decision.
+See [SOURCES.md](SOURCES.md), [ADR-0007](adr/0007-structured-progress-tool.md), and [ADR-0008](adr/0008-native-root-only.md).

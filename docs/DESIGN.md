@@ -77,25 +77,22 @@ These are regression guards against prompt creep.
 
 ### Why no `deferLoading`
 
-DSH preserves `deferLoading`, but an explicitly deferred baseline tool remains deferred until a retained addition activates it. This plugin needs its control primitive available from the beginning of the turn. PTC mode also carries a generated SDK representation, so deferred native declaration is not a universal context saving.
+Eligibility is handled by Agent-scoped registration rather than deferred loading. PTC/both Agents and runtime children never receive the tool, while an eligible native root receives the compact declaration immediately after its Agent setup and before queued input is released.
 
-The compact always-available schema is the safer trade. Dynamic registration would also emit tool-update history and disturb request-prefix stability for a saving that is only a few hundred schema bytes.
+Using `deferLoading` inside an eligible root would solve a different problem: it would delay a tool that the policy wants available for proactive semantic checkpoints from the beginning of that Agent's work.
 
-## Native and PTC presentation
+## Eligibility and Agent scope
 
-### Native mode
+The plugin does not register a global progress tool. It waits for Agent identity and installs into `agent.ctx` only when all conditions hold:
 
-`disclose_progress` is a top-level tool call. The call arguments are durable model-authored data and can be shown by generic tool presentation.
+1. the live Agent is present in `ctx.agents.roots()`, so it is not currently runtime-owned by another Agent;
+2. its durable header is not subagent lineage: `origin !== 'subagent'` and `delegationDepth` is absent or zero, covering cold-resumed children whose former parent is no longer live;
+3. `agent.ctx.tools.get('run_code', agent)` is absent, which is the public ToolRuntime view of exact `native` presentation. `ptc` and `both` views contain the reserved `run_code` transport and are skipped.
 
-### PTC mode
+`agent/created` is awaited after Agent setup and before queued input is released, so preset-owned presentation mode is already resolved when eligibility is sampled. The plugin also scans already-live roots on mount for hot-reload compatibility.
 
-Only `run_code` is directly callable. `disclose_progress` is a generated SDK binding and executes as a nested native dispatch.
+Eligible roots own `disclose_progress`, `session/event`, and `tools/post-execute` registrations through their Agent context. Scope-filtering therefore excludes every sibling Agent automatically and disposal unwinds the complete disclosure surface. PTC/both Agents and runtime children receive no tool declaration, SDK binding, counters, or reminder listener.
 
-Nested calls still reach this plugin's executor and post-execute hooks, so interval reset semantics are identical.
-
-DSH's conversation tool UI projects PTC dispatch children and dispatches atomic calls through the normal tool-view slot. Thus a progress call can still be inspected under its parent `run_code` card. The nested result remains execution-local and is not duplicated into model context.
-
-A future client plugin may give `disclose_progress` a dedicated visual treatment without changing the host protocol.
 
 ## State
 
@@ -132,7 +129,7 @@ Same-step work is not a checkpoint exemption. `stepTopLevelCalls` records comple
 
 ## Cadence
 
-`countCompletedCall()` counts top-level ordinary calls. Nested ordinary calls return before incrementing cadence.
+`countCompletedCall()` counts top-level ordinary calls. The pure helper retains its nested-call option for API compatibility, but the host policy is not installed in PTC/both scopes.
 
 The first reminder is due at `reminderAfterCalls`. Later reminders are spaced by the same amount from the first delivered reminder, until `maxReminders` is spent.
 
@@ -161,7 +158,7 @@ model gets a chance to react
 
 Activity is independent of cadence.
 
-Every completed ordinary operation, including nested native calls, is classified from its structured tool name as `inspect`, `mutate`, `verify`, or `other`.
+Every completed ordinary operation observed for the eligible native root is classified from its structured tool name as `inspect`, `mutate`, `verify`, or `other`.
 
 `disclose_progress` is excluded from the activity window because it reports work rather than performing task work.
 
@@ -189,4 +186,3 @@ A guard would enforce communication by denying task work. A stop steer would com
 - A single long blocking tool cannot be interrupted by this plugin.
 - Structural fields can still contain unhelpful or false prose.
 - Hot reload does not reconstruct an in-flight interval from history.
-- In PTC mode progress is visually nested under `run_code` unless a client adds a dedicated surface.

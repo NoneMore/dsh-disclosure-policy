@@ -1,8 +1,8 @@
 import type { Context } from '@deepseek-ai/cordis'
+import type { Agent } from '@deepseek-ai/dsh-agent'
 import z from '@deepseek-ai/schemastery'
 import { createUserMessage, type ContextFormed, type UserMessage } from '@deepseek-ai/dsh-llm'
-import type { Session } from '@deepseek-ai/dsh-session'
-import { defineTool, type PostToolDecision } from '@deepseek-ai/dsh-tools'
+import { defineTool, RUN_CODE_NAME, type PostToolDecision } from '@deepseek-ai/dsh-tools'
 import {
   classifyToolActivity,
   countCompletedCall,
@@ -24,6 +24,7 @@ import {
 } from './policy.js'
 
 // Declaration-merging side effects keep current DSH event/service names typed.
+import type {} from '@deepseek-ai/dsh-agent'
 import type {} from '@deepseek-ai/dsh-session'
 import type {} from '@deepseek-ai/dsh-tools'
 
@@ -34,7 +35,7 @@ declare module '@deepseek-ai/dsh-llm' {
 }
 
 export const name = DISCLOSURE_PLUGIN_NAME
-export const inject = ['tools']
+export const inject = ['tools', 'agents']
 
 export interface Config {
   /**
@@ -49,7 +50,7 @@ export interface Config {
    * one-shot reminder; `0` disables runtime reminders. Default 3.
    */
   maxReminders?: number
-  /** Recent operations retained, including nested native tools; 0 disables hints alone. Default 16. */
+  /** Recent operations retained for an eligible native root; 0 disables hints alone. Default 16. */
   activityWindowSize?: number
   /** Minimum inspections in the activity window, independent of cadence. Default 8. */
   inspectionHintMinInspections?: number
@@ -85,40 +86,33 @@ function notice(text: string): UserMessage {
 }
 
 /**
- * `dsh-disclosure-policy` host plugin.
+ * Install disclosure policy into one eligible Agent scope.
  *
- * Disclosure is a first-class model action rather than a magic Assistant-text
- * shape. The registered `disclose_progress` tool carries the standing policy in
- * its compact schema description, records model-authored progress as durable tool
- * arguments, and opens a fresh reminder interval when it executes.
- *
- * Runtime accounting still uses only two lightweight observation points:
- *
- * - `session/event` creates/discards one turn-local interval;
- * - `tools/post-execute` counts settled work and appends bounded reminder
- *   context when the model has gone too long without calling `disclose_progress`.
- *
- * No guard, TODO mutation, semantic prose classifier, or turn-stop steering is
- * registered. See ADR-0007.
+ * Agent-scoped registration is important here: the progress tool and both
+ * runtime listeners should not exist for PTC/both presentation or runtime
+ * child agents.
  */
-export function apply(ctx: Context, rawConfig: Config = {}): void {
-  const config = resolveConfig(rawConfig)
-  const intervals = new WeakMap<Session, IntervalState>()
+function installForAgent(
+  agentCtx: Context,
+  agent: Agent,
+  config: ReturnType<typeof resolveConfig>,
+): void {
+  let interval: IntervalState | undefined
 
-  ctx.on('session/event', (session, event) => {
+  agentCtx.on('session/event', (session, event) => {
+    if (session !== agent.session) return
     switch (event.type) {
       case 'turn/start':
-        intervals.set(session, {
+        interval = {
           silence: createSilence(),
           activity: createActivity(config.activityWindowSize),
           step: null,
           stepTopLevelCalls: 0,
           pendingDisclosureStep: null,
           remindedStep: null,
-        })
+        }
         return
       case 'assistant/message': {
-        const interval = intervals.get(session)
         if (interval === undefined) return
         interval.step = event.data.step
         interval.stepTopLevelCalls = 0
@@ -130,14 +124,14 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
         return
       }
       case 'turn/end':
-        intervals.delete(session)
+        interval = undefined
         return
       default:
         return
     }
   })
 
-  ctx.tools.register(defineTool({
+  agentCtx.tools.register(defineTool({
     name: DISCLOSURE_TOOL_NAME,
     description: DISCLOSURE_TOOL_DESCRIPTION,
     parameters: {
@@ -158,8 +152,7 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
       if (args.done.trim() === '' || args.next.trim() === '' || args.approach.trim() === '') {
         throw new Error('disclose_progress: done, next, and approach must be non-empty')
       }
-      const interval = exec.agent === undefined ? undefined : intervals.get(exec.agent.session)
-      if (interval !== undefined) {
+      if (exec.agent === agent && interval !== undefined) {
         resetSilence(interval.silence)
         // A checkpoint resets the previous interval, but top-level sibling work
         // already completed in this Assistant step must not disappear with it.
@@ -176,26 +169,17 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
   // call. The disclosure tool itself is accounting-neutral: executing it already
   // opened a new interval, and treating it as work would immediately consume one
   // call of that fresh interval.
-  ctx.on('tools/post-execute', async (exec, _result, next): Promise<PostToolDecision> => {
-    const interval = exec.agent === undefined ? undefined : intervals.get(exec.agent.session)
+  agentCtx.on('tools/post-execute', async (exec, _result, next): Promise<PostToolDecision> => {
+    if (exec.agent !== agent) return next()
+    if (exec.name === DISCLOSURE_TOOL_NAME) return next()
 
-    // A direct call is advertised in assistant/message before sibling tools run.
-    // A nested PTC call is not, so record the attempt here as well. Either way the
-    // progress action itself is cadence/activity-neutral.
-    if (exec.name === DISCLOSURE_TOOL_NAME) {
-      if (interval !== undefined) interval.pendingDisclosureStep = interval.step
-      return next()
-    }
-
+    const current = interval
     const observe = (): number | null => {
-      if (interval === undefined) return null
-      recordActivity(interval.activity, classifyToolActivity(exec.name))
+      if (current === undefined) return null
+      recordActivity(current.activity, classifyToolActivity(exec.name))
       const nested = exec.parent !== undefined
-      if (!nested) interval.stepTopLevelCalls += 1
-      // Same-step top-level work always advances cadence. If a checkpoint settles
-      // later in this step, execute() re-anchors already observed siblings into
-      // the fresh interval; siblings settling afterwards keep incrementing it.
-      return countCompletedCall(interval.silence, config.reminderAfterCalls, config.maxReminders, {
+      if (!nested) current.stepTopLevelCalls += 1
+      return countCompletedCall(current.silence, config.reminderAfterCalls, config.maxReminders, {
         nested,
       })
     }
@@ -208,22 +192,70 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
       throw error
     }
 
-    if (interval === undefined) return downstream
+    if (current === undefined) return downstream
     const index = observe()
     if (index === null) return downstream
 
-    const step = interval.step
+    const step = current.step
     // If this step is already trying to disclose, do not race it with a stale
     // reminder. Likewise, one model step can carry at most one reminder even if a
     // large parallel fan-out crosses several cadence periods.
     if (
       step !== null
-      && (interval.pendingDisclosureStep === step || interval.remindedStep === step)
+      && (current.pendingDisclosureStep === step || current.remindedStep === step)
     ) return downstream
 
-    const activityFact = inspectionActivityFact(interval.activity, config.inspectionHintMinInspections)
-    markReminderDelivered(interval.silence, interval.silence.calls, index)
-    interval.remindedStep = step
+    const activityFact = inspectionActivityFact(current.activity, config.inspectionHintMinInspections)
+    markReminderDelivered(current.silence, current.silence.calls, index)
+    current.remindedStep = step
     return withReminder(downstream, notice(reminderTextFor(index, activityFact)))
+  })
+}
+
+/**
+ * Whether this Agent is a main native root.
+ *
+ * Live ownership excludes currently attached children; durable header markers
+ * keep cold-resumed subagent sessions excluded after their former parent is gone.
+ */
+function isEligibleAgent(ctx: Context, agent: Agent): boolean {
+  if (!ctx.agents.roots().includes(agent)) return false
+  const { origin, delegationDepth } = agent.session.header
+  if (origin === 'subagent' || (delegationDepth ?? 0) > 0) return false
+  // ToolRuntime inserts reserved run_code into the effective view for both
+  // `ptc` and `both`, but not for exact `native` presentation.
+  return agent.ctx.tools.get(RUN_CODE_NAME, agent) === undefined
+}
+
+/**
+ * `dsh-disclosure-policy` host plugin.
+ *
+ * The plugin is intentionally native-root-only. PTC/both agents and runtime
+ * child agents receive no `disclose_progress` schema, no cadence state, and no
+ * post-execute reminder listener.
+ *
+ * One global `agent/created` listener discovers future eligible roots. Each
+ * eligible Agent owns the actual tool and observation listeners through
+ * `agent.ctx`, so they unwind with that Agent and scope-filter naturally.
+ *
+ * No guard, TODO mutation, semantic prose classifier, or turn-stop steering is
+ * registered. See ADR-0008.
+ */
+export function apply(ctx: Context, rawConfig: Config = {}): void {
+  const config = resolveConfig(rawConfig)
+  const installed = new WeakSet<Agent>()
+
+  const install = (agent: Agent): void => {
+    if (installed.has(agent) || !isEligibleAgent(ctx, agent)) return
+    installForAgent(agent.ctx, agent, config)
+    installed.add(agent)
+  }
+
+  // Hot reload may mount after a root already exists; normal startup reaches
+  // the same path through agent/created before the first queued input is released.
+  for (const agent of ctx.agents.roots()) install(agent)
+
+  ctx.on('agent/created', ({ agent }) => {
+    install(agent)
   })
 }

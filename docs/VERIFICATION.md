@@ -1,10 +1,22 @@
 # Verification record
 
+## Native main-agent scope: current checkout (2026-09-26)
+
+Verified PR #5 / `fix/native-root-only-disclosure`, with package version still `0.4.1` (unreleased changes).
+
+- GitHub Actions CI run **#71** passed on Node **22.19.0** and **24**.
+- On both jobs: `npm run typecheck`, `npm run build`, `npm test`, committed-`lib/` verification, and package-content verification passed.
+- Final test result for the scoped implementation: **33 passed, 0 failed, 0 skipped**.
+- Runtime coverage verifies that exact-native main roots receive `disclose_progress` plus scoped listeners, while `ptc`, `both`, live runtime children, and cold-resumed subagent lineage receive only the host-global `agent/created` discovery listener and no disclosure tool/accounting surface.
+- A separate regression keeps an ordinary top-level fork eligible when it has `parentSession`/seed lineage but no subagent `origin` and zero delegation depth.
+- The eligibility contracts were re-checked against DSH public source: `AgentRegistry.roots()` represents current live ownership, `SessionHeader.origin` / `delegationDepth` preserve subagent lineage across resume, scoped ToolRuntime `get('run_code', agent)` distinguishes exact native from `ptc`/`both`, and `agent/created` is awaited after setup before queued input runs.
+- No real routed-model/profile run was added for this scope change; CI validates the adapter, type contracts, committed build output, and package shape.
+
 ## Checkpoint-step accounting: current checkout (2026-09-26)
 
 Verified PR #4 / `fix/count-checkpoint-step-work`, with package version still `0.4.1` (unreleased changes).
 
-- GitHub Actions CI run **#67** passed on Node **22.19.0** and **24**.
+- GitHub Actions CI run **#68** passed on Node **22.19.0** and **24**.
 - On both jobs: `npm run typecheck`, `npm run build`, `npm test`, committed-`lib/` verification, and package-content verification passed.
 - Final test result: **34 passed, 0 failed, 0 skipped**.
 - The new regression covers top-level siblings settling both before and after a successful checkpoint in one Assistant step; all are carried into the fresh interval while reminder delivery remains fenced to a later model step.

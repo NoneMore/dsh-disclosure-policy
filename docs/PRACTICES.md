@@ -89,11 +89,13 @@ Do not solve “Agent looks offline” by making it say “still working” ever
 
 A Turn ending only proves that the model stopped owing immediate work according to the loop. It does not prove every external objective, test, deployment, or TODO succeeded. Task state therefore stays native, and the runtime never silently changes it. `dsh-disclosure-policy` goes further and does not touch task state at all: disclosure and accounting are separate lanes with separate owners.
 
-## 11. PTC / Code Mode accounting
+## 11. Keep supervision on the human-facing root lane
 
-Which calls to count is a policy choice, not a DSH fact. The current cadence counts **top-level ordinary** calls only (`exec.parent === undefined`), while nested native calls still enrich the activity window.
+Which execution surface should receive narration is a policy choice, not a DSH fact. The current policy deliberately scopes disclosure to an exact-native live runtime root.
 
-`disclose_progress` is different: a nested PTC invocation is itself the checkpoint and resets the interval. A successful checkpoint makes the whole Assistant step the boundary, so settlement order between the nested call and its enclosing `run_code` cannot change cadence semantics.
+PTC/both Agents are excluded rather than assigned a synthetic cadence over nested dispatches. A `run_code` program is an execution transport, not a useful unit of human-facing progress, and mapping its internal call count back to narration would create another heuristic policy. Runtime child/subagent Agents are also excluded: their live parent owns the delegation lifecycle and receives their result/report.
+
+Use DSH's explicit runtime ownership relation for this distinction. Durable Session lineage describes history and can outlive or differ from current ownership; `AgentRegistry.roots()` states which live Agents are actually top-level now.
 
 ## 12. Plugin compatibility practices
 

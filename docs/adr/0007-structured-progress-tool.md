@@ -2,6 +2,8 @@
 
 Status: accepted (2026-09-26)
 
+Scope amendment: [ADR-0008](0008-native-root-only.md) supersedes this ADR's native/PTC parity and PTC-accounting decisions. The structured `disclose_progress` protocol remains accepted for eligible exact-native runtime roots.
+
 A real exported session showed that model-authored Assistant prose is the wrong protocol primitive for an interim supervision checkpoint. The disclosure reminder caused the model to emit only the required four-line progress text, the provider returned `stop`, and DSH correctly closed the turn. The failure was not a deadlock: the protocol gave one Assistant message two incompatible meanings — "interim progress" and "a response that may terminate the turn".
 
 ## Decision
