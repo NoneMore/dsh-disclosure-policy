@@ -17,7 +17,7 @@ export const DISCLOSURE_TOOL_NAME = 'disclose_progress'
  * it is present in every request that exposes the tool.
  */
 export const DISCLOSURE_TOOL_DESCRIPTION =
-  'Progress checkpoint: briefly report done, next, approach. If work remains, call alongside the next work tool(s).'
+  'Brief update after findings, phase/plan shifts, checks, blockers, or long work: done, next, approach; batch with work.'
 
 /**
  * Historical prompt exports remain for policy-API compatibility. The host plugin
