@@ -83,10 +83,11 @@ Using `deferLoading` inside an eligible root would solve a different problem: it
 
 ## Eligibility and Agent scope
 
-The plugin does not register a global progress tool. It waits for Agent identity and installs into `agent.ctx` only when both conditions hold:
+The plugin does not register a global progress tool. It waits for Agent identity and installs into `agent.ctx` only when all conditions hold:
 
-1. the live Agent is present in `ctx.agents.roots()`, so it is not runtime-owned by another Agent;
-2. `agent.ctx.tools.get('run_code', agent)` is absent, which is the public ToolRuntime view of exact `native` presentation. `ptc` and `both` views contain the reserved `run_code` transport and are skipped.
+1. the live Agent is present in `ctx.agents.roots()`, so it is not currently runtime-owned by another Agent;
+2. its durable header is not subagent lineage: `origin !== 'subagent'` and `delegationDepth` is absent or zero, covering cold-resumed children whose former parent is no longer live;
+3. `agent.ctx.tools.get('run_code', agent)` is absent, which is the public ToolRuntime view of exact `native` presentation. `ptc` and `both` views contain the reserved `run_code` transport and are skipped.
 
 `agent/created` is awaited after Agent setup and before queued input is released, so preset-owned presentation mode is already resolved when eligibility is sampled. The plugin also scans already-live roots on mount for hot-reload compatibility.
 
