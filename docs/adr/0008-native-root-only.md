@@ -10,10 +10,11 @@ PTC already collapses model-visible execution behind `run_code`, and one outer p
 
 The host policy is **exact-native-root-only**.
 
-An Agent receives this plugin's disclosure surface only when both are true at installation time:
+An Agent receives this plugin's disclosure surface only when all are true at installation time:
 
 1. it is a live runtime root according to `ctx.agents.roots()`;
-2. its effective ToolRuntime view is exact `native`, detected by the absence of reserved `run_code` from `agent.ctx.tools.get(RUN_CODE_NAME, agent)`.
+2. its durable session is not marked as subagent lineage: `SessionHeader.origin !== 'subagent'` and `SessionHeader.delegationDepth` is absent or zero;
+3. its effective ToolRuntime view is exact `native`, detected by the absence of reserved `run_code` from `agent.ctx.tools.get(RUN_CODE_NAME, agent)`.
 
 Consequently:
 
@@ -24,11 +25,13 @@ Consequently:
 
 The plugin listens globally only for `agent/created` so it can discover future eligible roots. It also scans existing roots when mounted so hot reload can install onto an already-live eligible Agent.
 
-## Why runtime ownership, not session lineage
+## Why combine runtime ownership with durable subagent lineage
 
-DSH deliberately separates live Agent ownership from durable Session lineage. A resumed fork can be a runtime root, while a continuable child is explicitly owned by its live parent. The authoritative runtime relation is therefore `AgentRegistry.roots()` / `isOwnedBy()`, not `SessionHeader.origin`, `parentSession`, fork metadata, or a Context ancestry heuristic.
+DSH deliberately separates live Agent ownership from durable Session lineage, and this policy needs both facts.
 
-This keeps "subagent" aligned with the thing this policy actually cares about: whether another live Agent owns this Agent's execution lifecycle.
+`AgentRegistry.roots()` is authoritative for the current process: it excludes a child that is presently owned by another live Agent without guessing from Context ancestry or fork metadata. But a cold-resumed subagent may be reconstructed without its former parent as a live owner and therefore appear in `roots()`. The session header preserves exactly the product lineage needed for that case: `origin: 'subagent'` is the coarse child classification, and `delegationDepth > 0` is the persisted recursion-depth marker that cannot be lowered by restart/resume.
+
+The plugin therefore excludes an Agent if either the live registry says it is a child **or** the durable header says it came from subagent delegation. It does not use `parentSession` or generic fork/seeding metadata, because ordinary forks are not necessarily subagents.
 
 ## Why inspect the effective tool view
 
