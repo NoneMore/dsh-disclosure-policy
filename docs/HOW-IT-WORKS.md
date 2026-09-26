@@ -8,11 +8,12 @@ The plugin contributes:
 
 | Capability | DSH seam |
 |---|---|
-| structured progress primitive | `ctx.tools.register(defineTool(...))` |
-| turn lifecycle + model-step identity | `session/event` |
-| cadence/activity observation + reminder delivery | `tools/post-execute` |
+| root/native eligibility | global `agent/created` + `ctx.agents.roots()` + effective `run_code` visibility |
+| structured progress primitive | eligible `agent.ctx.tools.register(defineTool(...))` |
+| turn lifecycle + model-step identity | eligible Agent-scoped `session/event` |
+| cadence/activity observation + reminder delivery | eligible Agent-scoped `tools/post-execute` |
 
-It registers no guard, no turn-stopping listener, and no system-prompt section.
+It registers no guard, no turn-stopping listener, and no system-prompt section. PTC/both Agents and runtime children receive none of the three Agent-scoped contributions.
 
 ## 2. Progress tool
 
@@ -40,11 +41,11 @@ defineTool({
 
 The arguments are the model-authored disclosure. The successful result contains no model-facing text, avoiding an echo into the next request.
 
-The tool remains visible in native mode and becomes an SDK binding in PTC mode. DSH's tool conversation UI projects PTC dispatch children, so nested calls can still be inspected by the supervisor.
+The tool exists only in exact-native runtime roots. PTC/both Agents and runtime children do not receive a `disclose_progress` declaration or SDK binding.
 
 ## 3. Turn-local state
 
-A `WeakMap<Session, IntervalState>` is initialized only on `turn/start` and deleted on `turn/end`.
+Each eligible Agent scope owns one turn-local `IntervalState`, initialized on its `turn/start` and cleared on `turn/end`.
 
 State contains:
 - disclosure cadence/budget counters;
@@ -85,7 +86,7 @@ After the next Assistant message changes `step`, an overdue reminder can be deli
 
 ## 7. Activity hint
 
-All ordinary completed operations, including nested calls, enter the rolling activity window.
+All ordinary completed operations observed for the eligible native root enter the rolling activity window.
 
 Classification uses only the structured tool name. Generic shell/composite tools are `other`.
 
