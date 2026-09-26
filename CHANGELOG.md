@@ -4,10 +4,11 @@
 
 - Replace Assistant-text disclosure with the structured `disclose_progress({ done, next, approach })` model tool. A successful call resets reminder accounting; ordinary Assistant prose no longer affects disclosure state. This removes the protocol ambiguity that allowed a progress-only Assistant response to terminate the turn. See ADR-0007.
 - Remove the standing disclosure system-prompt section and all turn-stopping steering. Keep legacy text-recognition helpers exported only for `./policy` compatibility.
-- Bound fixed context overhead: one compact tool description, three required string fields with no parameter descriptions, no successful result text, and short reminder/repeat strings. Tests enforce declaration/text size ceilings.
-- Support both native and PTC execution: nested PTC `disclose_progress` calls reset the interval while the enclosing `run_code` remains the next counted top-level call.
+- Bound fixed context overhead: one compact tool description, three required string fields with no parameter descriptions, no successful result text, and short reminder/repeat strings. The description still names the semantic checkpoint moments (findings, phase/plan shifts, checks, blockers, long work), and whitespace-only fields are rejected in the executor without growing the schema. Tests enforce declaration/text size ceilings.
+- Support both native and PTC execution: nested PTC `disclose_progress` calls reset the interval while the enclosing `run_code` remains the next counted top-level call. Explicitly classify the no-I/O checkpoint as concurrency-safe so it does not become DSH's default exclusive scheduling barrier; when work remains, guidance asks the model to batch the checkpoint with the next work tool(s).
 - Fix the pre-existing parallel cadence gap by fencing reminder delivery with `assistant/message.data.step`: one model step can carry at most one reminder even if a large fan-out crosses several cadence periods.
 - Retain ADR-0006's rolling activity window across progress checkpoints. The progress tool itself is excluded from activity; the optional inspection-heavy suffix is shortened to one factual sentence.
+- Drop the now-unused `dsh-agent` and `dsh-system-prompt` direct peer/dev dependencies after removing turn-stop steering and the standing prompt section.
 
 ## 0.4.1 - 2026-09-24
 
