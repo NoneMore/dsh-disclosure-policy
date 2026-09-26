@@ -52,9 +52,10 @@ test('the progress primitive and reminders have a tight fixed-context budget', (
   assert.ok(DISCLOSURE_POLICY_TEXT.length < 140)
   assert.ok(DISCLOSURE_REMINDER_TEXT.length < 130)
   assert.ok(DISCLOSURE_REPEAT_TEXT.length < 100)
-  assert.match(DISCLOSURE_TOOL_DESCRIPTION, /done, next, and approach/)
-  assert.match(DISCLOSURE_TOOL_DESCRIPTION, /continue unless blocked/)
+  assert.match(DISCLOSURE_TOOL_DESCRIPTION, /done, next, approach/)
+  assert.match(DISCLOSURE_TOOL_DESCRIPTION, /alongside the next work tool/)
   assert.match(DISCLOSURE_REMINDER_TEXT, /disclose_progress/)
+  assert.match(DISCLOSURE_REMINDER_TEXT, /batch it with the next work tool/)
   assert.doesNotMatch(DISCLOSURE_REMINDER_TEXT, /four|line|format|schema|reasoning|chain-of-thought/i)
 })
 
