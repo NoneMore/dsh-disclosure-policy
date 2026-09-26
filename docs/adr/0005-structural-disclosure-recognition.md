@@ -1,8 +1,8 @@
 # Recognize an explicit disclosure structure before resetting reminders
 
-Status: accepted (2026-09-26), partly superseded by [ADR-0006](0006-recent-activity-hints.md) for activity accounting. The user confirmed shared understanding and explicitly invoked the implementation phase; the runtime recognizer and model-facing policy implement this decision. Structured disclosure now resets reminder accounting only; recent activity is preserved under ADR-0006.
+Status: historical (2026-09-26), superseded for runtime behavior by [ADR-0007](0007-structured-progress-tool.md); compatibility helpers remain exported. [ADR-0006](0006-recent-activity-hints.md) still governs activity accounting. The user confirmed shared understanding and explicitly invoked the implementation phase; the runtime recognizer and model-facing policy implement this decision. Structured disclosure now resets reminder accounting only; recent activity is preserved under ADR-0006.
 
-The supplied session export contains model-authored visible messages such as "Now the replay check in `choose_nested`:" that satisfied the previous reset predicate while providing no finding or investigation basis. The confirmed design direction is to replace the any-visible-text reset rule with an explicit model-authored disclosure structure checked deterministically, rather than adding a model call to judge prose.
+This ADR records the former Assistant-text protocol. The supplied session export contains model-authored visible messages such as "Now the replay check in `choose_nested`:" that satisfied the previous reset predicate while providing no finding or investigation basis. The confirmed design direction is to replace the any-visible-text reset rule with an explicit model-authored disclosure structure checked deterministically, rather than adding a model call to judge prose.
 
 ## Confirmed decisions
 
@@ -45,3 +45,8 @@ This decision supersedes the any-visible-text reset clauses in [ADR-0003](0003-m
 ## Design checkpoint
 
 The design frontier is empty and the user confirmed shared understanding. The design workflow is complete; implementation was authorized through a separate explicit invocation of the `implement` skill.
+
+
+## Supersession by ADR-0007
+
+A later real session demonstrated the missing lifecycle property: even a correctly recognized four-line progress response can be a legal terminal Assistant response. Runtime reset therefore moved to the `disclose_progress` tool. `isModelDisclosure()` remains only as a deprecated compatibility export and is not called by the host adapter.
