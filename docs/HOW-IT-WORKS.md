@@ -1,6 +1,6 @@
 # How `dsh-disclosure-policy` works
 
-Implementation walkthrough for the **current checkout**, updated 2026-09-26 for ADR-0005. Installed-tree citations below retain their historical 2026-09-16 audit snapshot; current behavior is checked against source and tests.
+Implementation walkthrough for the **current checkout**, updated 2026-09-26 for ADR-0007. Installed-tree citations below retain their historical 2026-09-16 audit snapshot; current behavior is checked against source and tests.
 
 - `DSHROOT` = `E:\Apps\nvm\v24.19.0\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai\`
 - Verified package versions: `dsh-*` `0.1.5-rc.2`, `cordis` `4.0.2`, `schemastery` `3.18.2`.
@@ -21,10 +21,11 @@ The plugin contributes three things:
 | A static disclosure policy in the system prompt, order `10150` | `systemPrompt.section()` via `ctx.effect()` |
 | One turn-local disclosure projection per session | `session/event` listener |
 | At most `maxReminders` soft reminders per disclosure interval, one per cadence period | `tools/post-execute` → `additionalContexts` |
+| One bounded repair for a reminder-triggered disclosure-only stop | `agent/turn-stopping` → `agent.steer()` |
 
 Everything decidable lives in `src/policy.ts`, which imports nothing from the host. `src/index.ts` is a thin adapter — about 60 lines of code plus comments — over those decisions. `lib/` is the compiled output of `src/` and is what the tests exercise.
 
-There is no guard, no `todo` access, no steering, and no durable event.
+There is no guard, no `todo` access, and no durable event. Steering exists only at the natural stop boundary for the narrow ADR-0007 repair, bounded to one extra step per turn.
 
 ---
 
@@ -82,11 +83,11 @@ A deployment that installs a `complete: true` prompt section can suppress every 
 The repository's test suite asserts the registration surface directly, using a fake `ctx` over the built `lib/index.js`:
 
 ```js
-assert.deepEqual(harness.eventNames().sort(), ['session/event', 'tools/post-execute'])
+assert.deepEqual(harness.eventNames().sort(), ['agent/turn-stopping', 'session/event', 'tools/post-execute'])
 assert.equal(harness.guards.length, 0)
 ```
 
-so a future edit that adds a guard, a `todo/write` listener, or a `turn-stopping` steer fails the suite.
+so a future edit that adds a guard or a `todo/write` listener, or changes the bounded `turn-stopping` repair unexpectedly, fails the suite.
 
 ---
 
@@ -323,10 +324,10 @@ Denied variant: a call denied by another policy still returns through `post-exec
 - **Hot reload loses the current interval.** By design: no history scan. The first reminder after a reload can be delayed to the next turn.
 - **The threshold is a failsafe, not a semantic trigger.** Nothing in DSH exposes "a phase completed" or "a test now passes", so `reminderAfterCalls` measures calls since recognized disclosure, not task progress. The standing policy carries the meaning.
 - **Activity shape is deliberately shallow.** It classifies structured tool names, not arbitrary shell command text, and says nothing about whether an operation was useful, whether a mutation actually changed files, or whether a verification proved the task correct.
-- **A reminder can be ignored.** Disclosure is best-effort; the plugin has no way to compel it and does not try (ADR-0003). ADR-0004 raises the cost of staying silent with a bounded repeat cadence, but an interval that spends its whole budget is still silent for the rest of that turn.
+- **A reminder can be ignored.** Disclosure itself remains best-effort. ADR-0007 only prevents one plugin-induced failure mode: when a reminder is satisfied by a standalone recognized disclosure that would immediately stop the turn, the plugin steers one more step. A model can still ignore reminders entirely, and the repair never loops.
 - **Complete structure is the reset, and content is not scored.** Ordinary prose cannot open a new interval. Vague, repeated, or false complete structures still can; the plugin checks expression rather than prose quality (ADR-0005).
 - **The interval does not survive `turn/end`.** A model that keeps opening fresh turns is not covered by the cadence (ADR-0004).
-- **No commentary phase exists in this build.** The plugin never claims that a given assistant message is interim or final; it recognizes structure in model-authored visible text.
+- **No commentary phase exists in this build.** The plugin recognizes structure rather than an interim/final phase. ADR-0007 therefore keys the stop repair to a concrete causal sequence (delivered reminder → standalone recognized disclosure → natural stop), not to a claimed commentary classification.
 - **The real-profile check covered boot, not a model turn.** An isolated Web profile loaded the packed plugin and listened successfully, but no live model turn was driven through the reminder threshold; see `docs/VERIFICATION.md`.
 
 ---
@@ -337,7 +338,7 @@ Denied variant: a call denied by another policy still returns through `post-exec
 
 - `src/policy.ts`, `src/index.ts`, `lib/index.js` — the implementation described above.
 - `test/policy.test.mjs`, `test/runtime.test.mjs` — the behavioral contract.
-- `docs/DESIGN.md`, `docs/SOURCES.md`, `docs/adr/0001-supervision-over-enforcement.md`, `docs/adr/0003-model-authored-disclosure.md`, `docs/adr/0004-bounded-repeat-reminders.md`.
+- `docs/DESIGN.md`, `docs/SOURCES.md`, `docs/adr/0001-supervision-over-enforcement.md`, `docs/adr/0003-model-authored-disclosure.md`, `docs/adr/0004-bounded-repeat-reminders.md`, `docs/adr/0007-bounded-continuation-after-reminder-disclosure.md`.
 
 ### Installed DSH contracts (`DSHROOT` = `E:\Apps\nvm\v24.19.0\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai\`)
 
