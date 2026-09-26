@@ -50,7 +50,7 @@ export interface Config {
    * one-shot reminder; `0` disables runtime reminders. Default 3.
    */
   maxReminders?: number
-  /** Recent operations retained, including nested native tools; 0 disables hints alone. Default 16. */
+  /** Recent operations retained for an eligible native root; 0 disables hints alone. Default 16. */
   activityWindowSize?: number
   /** Minimum inspections in the activity window, independent of cadence. Default 8. */
   inspectionHintMinInspections?: number
