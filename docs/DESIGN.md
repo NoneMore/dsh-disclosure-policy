@@ -104,10 +104,10 @@ If `next()` throws, the completed top-level call still advances the interval and
 `ctx.tools.guard()` is a monotonic deny with no allow result. It is the right tool for a hard invariant, and the wrong tool for this one:
 
 - denial corrects the model's *style*, which was never the failure; the failure is the supervisor's blindness, and a denial does not cure blindness — it only makes the model talk;
-- a guard is enforcement, and ADR-0001 removes enforcement from this plugin entirely;
+- a guard is tool-call enforcement, and ADR-0001 removes that mechanism from this plugin;
 - the reminder still needs `tools/post-execute` to deliver text, so a guard would add a second mechanism with no new capability.
 
-The plugin therefore registers exactly two extension points and nothing else. Its own test suite asserts that: one `session/event` listener, one `tools/post-execute` listener, zero guards, no `todo` listener, no steering.
+The plugin registers the two disclosure-accounting points plus one narrowly bounded stop-boundary repair from ADR-0007: `session/event`, `tools/post-execute`, and `agent/turn-stopping`. The test suite asserts zero guards and no `todo` listener, while separately proving that stop steering occurs only after a delivered reminder is satisfied by a standalone recognized disclosure, at most once per turn.
 
 ## Why the policy text is static
 
