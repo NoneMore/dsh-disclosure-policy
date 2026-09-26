@@ -25,9 +25,11 @@ The redesign is a replacement, not an additive layer.
 - The tool has one short description and exactly three required string fields: `done`, `next`, and `approach`.
 - Parameter descriptions are intentionally omitted; the field names and tool description carry the contract.
 - A successful tool result has canonical value `null` and renders **zero model-facing content blocks**, avoiding an echo of text the model already authored in the call arguments.
+- The tool explicitly opts into parallel scheduling with `isConcurrencySafe: () => true`. DSH treats an omitted classifier as **exclusive**, so leaving it undefined would add a serial barrier around every checkpoint.
+- The description/reminder tells the model to issue the checkpoint alongside the next work tool(s) when work remains, avoiding an extra model round-trip in the common case.
 - Runtime reminders contain no four-line template or prose-format instructions; they only name `disclose_progress` and ask the model to continue.
 - Activity context remains conditional and is shortened to one factual sentence.
-- `deferLoading` is not used. Current DSH retains explicitly deferred baseline tools until a later retained addition activates them, while PTC still pays generated-SDK cost. For this always-available control primitive, reliability is more important than that provider-dependent optimization.
+- `deferLoading` is not used. Current DSH retains explicitly deferred baseline tools until a later retained addition activates them, while unsupported routes fall back to active declarations and PTC still pays generated-SDK cost. Dynamically adding/removing this tool would also create tool-update history and cache churn. For this tiny always-available control primitive, a fixed compact schema is the lower-risk overhead trade.
 
 Tests enforce byte/character ceilings for the fixed description/reminder surface and inspect the registered schema so accidental descriptive bloat fails CI.
 
