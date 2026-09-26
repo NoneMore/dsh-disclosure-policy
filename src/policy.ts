@@ -34,10 +34,10 @@ export interface DisclosureConfig {
    */
   reminderAfterCalls: number
   /**
-   * Reminder budget for one disclosure interval. `1` is a one-shot reminder;
-   * `0` disables reminders.
+   * Maximum spacing between repeat reminders after exponential backoff.
+   * Must be at least `reminderAfterCalls` when reminders are enabled.
    */
-  maxReminders: number
+  maxReminderIntervalCalls: number
   /** Recent observed operations retained for activity hints; 0 disables hints alone. */
   activityWindowSize: number
   /** Minimum inspections in the activity window, independent of reminder cadence. */
@@ -46,7 +46,7 @@ export interface DisclosureConfig {
 
 export const DEFAULT_CONFIG: Readonly<DisclosureConfig> = Object.freeze({
   reminderAfterCalls: 8,
-  maxReminders: 3,
+  maxReminderIntervalCalls: 64,
   activityWindowSize: 16,
   inspectionHintMinInspections: 8,
 })
@@ -137,7 +137,7 @@ export function inspectionActivityFact(state: ActivityState, minimumInspections:
 /** Resolve and validate behavioral options. */
 export function resolveConfig(input: Partial<DisclosureConfig> = {}): DisclosureConfig {
   const reminderAfterCalls = input.reminderAfterCalls ?? DEFAULT_CONFIG.reminderAfterCalls
-  const maxReminders = input.maxReminders ?? DEFAULT_CONFIG.maxReminders
+  const maxReminderIntervalCalls = input.maxReminderIntervalCalls ?? DEFAULT_CONFIG.maxReminderIntervalCalls
   const {
     activityWindowSize = DEFAULT_CONFIG.activityWindowSize,
     inspectionHintMinInspections = DEFAULT_CONFIG.inspectionHintMinInspections,
@@ -145,8 +145,11 @@ export function resolveConfig(input: Partial<DisclosureConfig> = {}): Disclosure
   if (!Number.isSafeInteger(reminderAfterCalls) || reminderAfterCalls < 0) {
     throw new Error('disclosure-policy: reminderAfterCalls must be a non-negative safe integer')
   }
-  if (!Number.isSafeInteger(maxReminders) || maxReminders < 0) {
-    throw new Error('disclosure-policy: maxReminders must be a non-negative safe integer')
+  if (!Number.isSafeInteger(maxReminderIntervalCalls) || maxReminderIntervalCalls <= 0) {
+    throw new Error('disclosure-policy: maxReminderIntervalCalls must be a positive safe integer')
+  }
+  if (reminderAfterCalls > 0 && maxReminderIntervalCalls < reminderAfterCalls) {
+    throw new Error('disclosure-policy: maxReminderIntervalCalls must be at least reminderAfterCalls')
   }
   validateActivityWindowSize(activityWindowSize)
   if (!Number.isSafeInteger(inspectionHintMinInspections) || inspectionHintMinInspections <= 0) {
@@ -155,7 +158,7 @@ export function resolveConfig(input: Partial<DisclosureConfig> = {}): Disclosure
   if (activityWindowSize > 0 && inspectionHintMinInspections > activityWindowSize) {
     throw new Error('disclosure-policy: inspectionHintMinInspections must not exceed activityWindowSize')
   }
-  return Object.freeze({ reminderAfterCalls, maxReminders, activityWindowSize, inspectionHintMinInspections })
+  return Object.freeze({ reminderAfterCalls, maxReminderIntervalCalls, activityWindowSize, inspectionHintMinInspections })
 }
 
 export interface ContentBlockLike {
@@ -212,13 +215,13 @@ export function isModelDisclosure(message: MessageLike): boolean {
 export interface SilenceState {
   /** Completed top-level work calls since the interval opened. */
   calls: number
-  /** Call count where this interval's first reminder was actually delivered. */
-  firstReminderAt: number | null
-  /** Reminders delivered in this interval, and the budget index of the next one. */
+  /** Call count where the latest reminder was actually delivered. */
+  lastReminderAt: number | null
+  /** Reminders delivered in this interval; also the backoff index of the next one. */
   delivered: number
 }
 
-const OPEN_INTERVAL = Object.freeze({ calls: 0, firstReminderAt: null, delivered: 0 })
+const OPEN_INTERVAL = Object.freeze({ calls: 0, lastReminderAt: null, delivered: 0 })
 
 export function createSilence(): SilenceState {
   return { ...OPEN_INTERVAL }
@@ -234,31 +237,42 @@ export function resetSilence(state: SilenceState): SilenceState {
  * Count one completed top-level work call and report which reminder it carries.
  * Nested calls inside a composite tool do not advance cadence.
  */
+function reminderIntervalFor(
+  index: number,
+  reminderAfterCalls: number,
+  maxReminderIntervalCalls: number,
+): number {
+  let interval = reminderAfterCalls
+  for (let step = 0; step < index && interval < maxReminderIntervalCalls; step += 1) {
+    interval = interval > Math.floor(maxReminderIntervalCalls / 2)
+      ? maxReminderIntervalCalls
+      : interval * 2
+  }
+  return Math.min(interval, maxReminderIntervalCalls)
+}
+
 export function countCompletedCall(
   state: SilenceState,
   reminderAfterCalls: number,
-  maxReminders: number,
+  maxReminderIntervalCalls: number,
   options: { readonly nested?: boolean } = {},
 ): number | null {
   if (options.nested === true) return null
 
   state.calls += 1
-  if (reminderAfterCalls <= 0 || maxReminders <= 0) return null
+  if (reminderAfterCalls <= 0) return null
 
   const index = state.delivered
-  if (index >= maxReminders) return null
-
-  const dueAt = state.firstReminderAt === null
-    ? reminderAfterCalls
-    : state.firstReminderAt + index * reminderAfterCalls
+  const interval = reminderIntervalFor(index, reminderAfterCalls, maxReminderIntervalCalls)
+  const dueAt = (state.lastReminderAt ?? 0) + interval
   if (state.calls < dueAt) return null
 
   return index
 }
 
-/** Record that a reminder was actually delivered. */
+/** Record that a reminder was actually delivered and anchor the next backoff interval. */
 export function markReminderDelivered(state: SilenceState, calls: number, index: number): void {
-  if (state.firstReminderAt === null) state.firstReminderAt = calls
+  state.lastReminderAt = calls
   state.delivered = index + 1
 }
 
