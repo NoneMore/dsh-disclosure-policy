@@ -33,7 +33,7 @@ test('defaults and zero-disable semantics remain stable', () => {
 })
 
 test('invalid numeric configuration fails closed', () => {
-  for (const invalid of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, '8']) {
+  for (const invalid of [null, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1, '8']) {
     assert.throws(() => resolveConfig({ reminderAfterCalls: invalid }), /reminderAfterCalls/)
   }
   for (const invalid of [null, 0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1, '8']) {
