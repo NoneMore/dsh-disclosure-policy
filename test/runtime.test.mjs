@@ -320,7 +320,7 @@ test('Assistant prose no longer resets disclosure accounting', { skip }, async (
   assertNoticeShape(await harness.postExecute(session), 0)
 })
 
-test('disclose_progress resets cadence and restores the reminder budget without counting itself', { skip }, async () => {
+test('disclose_progress resets cadence and backoff without counting itself', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'tool-reset' }
   host.apply(harness.ctx, { reminderAfterCalls: 3, maxReminderIntervalCalls: 3, activityWindowSize: 0 })
@@ -507,7 +507,7 @@ test('one model step can deliver at most one reminder even across several cadenc
   )
   assert.equal(decisions.filter(decision => reminders(decision).length > 0).length, 1)
 
-  // Calls 16 and 24 are already overdue, but the next budget slot is delivered
+  // Calls beyond the first threshold are already overdue, but the next repeat is delivered
   // only after the model has had a chance to observe the first reminder.
   harness.emit(session, assistantStep(2))
   assertNoticeShape(await harness.postExecute(session), 1)
