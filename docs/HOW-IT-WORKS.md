@@ -114,9 +114,10 @@ CI tests cap the fixed description/reminder sizes, inspect the schema for accide
 
 ## 9. Eligibility details
 
-Eligibility is based on live runtime ownership and the Agent's effective tool presentation, not on persisted session lineage.
+Eligibility combines live runtime ownership, durable subagent lineage, and the Agent's effective tool presentation.
 
-- `ctx.agents.roots()` identifies live top-level Agents. Runtime-owned children are excluded even if their durable session metadata is unusual or resumed.
+- `ctx.agents.roots()` identifies live top-level Agents and excludes currently owned runtime children.
+- `SessionHeader.origin === 'subagent'` or `delegationDepth > 0` excludes cold-resumed subagent sessions that no longer have a live parent owner. Generic `parentSession`/fork lineage is intentionally not enough.
 - `agent.ctx.tools.get('run_code', agent)` is absent only for exact `native` presentation. Both `ptc` and `both` expose the reserved transport and are excluded.
 - `agent/created` runs after Agent setup and before queued input is released, so preset/scoped presentation has already been composed when the plugin samples eligibility.
 - Registrations are made through `agent.ctx`, so the tool and listeners are Agent-local and unwind when that Agent is disposed.
@@ -137,7 +138,7 @@ Primary upstream contracts used by this design:
 
 - `defineTool()` validates typed parameters and canonical output.
 - tool schemas are model-visible; output declarations/executors are not.
-- `AgentRegistry.roots()` identifies live top-level Agents independently of durable session lineage.
+- `AgentRegistry.roots()` identifies current live ownership; durable `SessionHeader.origin` / `delegationDepth` separately preserve subagent lineage across cold resume.
 - `agent/created` runs after setup; Agent-scoped registrations through `agent.ctx` exist only for that Agent and unwind on disposal.
 - ToolRuntime's public `get(name, scope)` resolves the effective scoped view; reserved `run_code` is present for non-native presentation.
 - Agent-scoped `session/event` and `tools/post-execute` listeners receive only that Agent's work.
