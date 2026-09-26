@@ -135,7 +135,7 @@ Limits of this re-check: section G began as a contract-level audit (type declara
 
 ## H. Contracts retained by the current design
 
-ADR-0007 keeps model-authored disclosure as the structured `disclose_progress` tool; ADR-0008 limits that surface to exact-native live runtime roots.
+ADR-0007 keeps model-authored disclosure as the structured `disclose_progress` tool; ADR-0008 limits that surface to exact-native live runtime roots; ADR-0009 replaces the finite reminder budget with capped backoff.
 
 | Dependency | Evidence and consequence |
 |---|---|
@@ -149,7 +149,7 @@ ADR-0007 keeps model-authored disclosure as the structured `disclose_progress` t
 | Assistant step identity is durable before tools run | `assistant/message.data.step` is committed before dispatching that response's tool calls. The adapter uses the step number only to fence reminder delivery and preserve checkpoint-step accounting. |
 | Guards and stop steering are unnecessary | `ctx.tools.guard()` is a deny mechanism and `agent/turn-stopping` can force an extra step. The structured progress action eliminates the need for either. |
 
-The exact-native-root eligibility rule, fixed cadence, budget, activity window, compact schema, and size ceilings are local policy rather than DSH defaults.
+The exact-native-root eligibility rule, reminder backoff and interval cap, activity window, compact schema, and size ceilings are local policy rather than DSH defaults.
 
 ## I. Historical Assistant-text disclosure design (superseded 2026-09-26)
 
@@ -167,6 +167,6 @@ The exact-native-root eligibility rule, fixed cadence, budget, activity window, 
 [ADR-0006](adr/0006-recent-activity-hints.md) records the user's confirmed design and explicitly authorized implementation for recent activity hints in the current checkout.
 
 - **Local code evidence:** the previous cumulative counters let one classified edit/test suppress the suffix for the whole disclosure interval. Current `createActivity()` and `recordActivity()` maintain a bounded ring of observations; `inspectionActivityFact()` uses its current counts and actual length. `src/index.ts` preserves activity when `disclose_progress` resets reminder accounting and evaluates the suffix only when an ordinary reminder is due.
-- **Selected local policy:** a configurable rolling window defaults to the latest 16 observed operations, including nested native operations and `other`; eligibility defaults to at least 8 inspections and zero classified mutation/verification operations. A partial window may qualify. `disclose_progress` preserves this window, while reminder accounting and budget reset. Window values are independent of reminder cadence, and hints remain attached only to due reminders within the existing budget.
+- **Selected local policy:** a configurable rolling window defaults to the latest 16 observed operations, including nested native operations and `other`; eligibility defaults to at least 8 inspections and zero classified mutation/verification operations. A partial window may qualify. `disclose_progress` preserves this window while reminder accounting and backoff reset. Window values are independent of reminder cadence, and hints remain attached only to reminders that are already due.
 - **Retained contract basis:** structured tool names and nested-dispatch identification (section A), live `session/event` projections, and `tools/post-execute.additionalContexts` (sections A, G, and H). The design adds no new DSH API dependency, durable event type, history scan, guard, or steering path. It retains observation order, result-independent tool classification, and turn-local lifecycle.
 - **Evidence boundary:** window capacity, inspection minimum, validation, and preservation across disclosure are local design choices, not DSH or Codex guarantees. Build, typecheck, 48 tests (27 policy, 21 runtime), syntax checks, and a packed-plugin real Web-profile boot under DSH `0.1.7-rc.2` passed. The composed row includes both new settings. No controlled live model turn or period of real-use tuning was performed; see `VERIFICATION.md`.
