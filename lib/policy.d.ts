@@ -1,33 +1,35 @@
 /**
  * Pure disclosure policy.
  *
- * Runtime disclosure is now a structured tool action rather than an Assistant
- * text shape. This module keeps reminder/activity accounting host-independent.
+ * The host adapter owns tool registration. This module contains only lightweight
+ * accounting, activity classification, and reminder composition so it stays
+ * testable without the DeepSeek Harness dependency graph.
  */
-/** Package/plugin identity carried by reminder notices. */
+/** Package/plugin identity carried by every notice this policy emits. */
 export declare const DISCLOSURE_PLUGIN_NAME = "disclosure-policy";
-/** Structured progress primitive registered by the host adapter. */
+/** Model-facing progress action registered by the host adapter. */
 export declare const DISCLOSURE_TOOL_NAME = "disclose_progress";
 /**
- * Kept for policy-API compatibility. The plugin no longer mounts a separate
- * standing prompt section; the compact tool declaration carries this policy.
+ * The tool schema is the standing model-facing contract. Keep this short because
+ * it is present in every request that exposes the tool.
  */
-export declare const DISCLOSURE_POLICY_ORDER = 10150;
-export declare const DISCLOSURE_POLICY_SECTION_NAME = "plugin:disclosure-policy:policy";
-export declare const DISCLOSURE_POLICY_TEXT = "During long autonomous work, use disclose_progress for brief supervisor checkpoints and continue unless blocked.";
-/**
- * Keep this compact: tool declarations are fixed per-request context in native
- * mode and become generated SDK text in PTC mode.
- */
-export declare const DISCLOSURE_TOOL_DESCRIPTION = "Checkpoint long autonomous work: report done, next, and approach; then continue unless blocked.";
+export declare const DISCLOSURE_TOOL_DESCRIPTION = "Report material progress: done, next, and approach; continue unless blocked. Use after findings or verification.";
+/** Legacy export retained for callers; no separate prompt section is installed. */
+export declare const DISCLOSURE_POLICY_TEXT = "Report material progress: done, next, and approach; continue unless blocked. Use after findings or verification.";
 export interface DisclosureConfig {
-    /** Completed top-level non-disclosure calls per reminder period; 0 disables reminders. */
+    /**
+     * Completed top-level work calls that advance the reminder cadence by one
+     * position. `0` disables runtime reminders while keeping the disclosure tool.
+     */
     reminderAfterCalls: number;
-    /** Reminder budget for one disclosure interval; 0 disables reminders. */
+    /**
+     * Reminder budget for one disclosure interval. `1` is a one-shot reminder;
+     * `0` disables reminders.
+     */
     maxReminders: number;
-    /** Recent operations retained for activity hints; 0 disables hints alone. */
+    /** Recent observed operations retained for activity hints; 0 disables hints alone. */
     activityWindowSize: number;
-    /** Minimum inspections in the activity window, independent of cadence. */
+    /** Minimum inspections in the activity window, independent of reminder cadence. */
     inspectionHintMinInspections: number;
 }
 export declare const DEFAULT_CONFIG: Readonly<DisclosureConfig>;
@@ -41,17 +43,21 @@ export interface ActivityState {
     readonly operations: ActivityKind[];
     next: number;
 }
+/** Bounded activity window, independent of disclosure intervals. */
 export declare function createActivity(windowSize?: number): ActivityState;
+/** Explicitly clear the activity window; disclosure does not call this helper. */
 export declare function resetActivity(state: ActivityState): ActivityState;
+/** Classify one tool by its structured name only. */
 export declare function classifyToolActivity(toolName: string): ActivityKind;
+/** Observe one operation, evicting the oldest when the window is full. */
 export declare function recordActivity(state: ActivityState, kind: ActivityKind): ActivityState;
-/** Compact factual suffix used only when the normal reminder is already due. */
-export declare function inspectionActivityFact(state: ActivityState, minimumInspections: number): string | null;
-export declare function resolveConfig(input?: Partial<DisclosureConfig>): DisclosureConfig;
 /**
- * Legacy expression helpers retained for ./policy API compatibility.
- * Runtime accounting no longer inspects Assistant prose.
+ * Objective context for an inspection-only stretch, or `null` when the shape
+ * is not notable enough to add to the ordinary reminder.
  */
+export declare function inspectionActivityFact(state: ActivityState, minimumInspections: number): string | null;
+/** Resolve and validate behavioral options. */
+export declare function resolveConfig(input?: Partial<DisclosureConfig>): DisclosureConfig;
 export interface ContentBlockLike {
     readonly type: string;
     readonly text?: unknown;
@@ -63,26 +69,48 @@ export interface MessageLike {
     };
     readonly content: readonly ContentBlockLike[];
 }
-/** @deprecated Runtime disclosure uses disclose_progress instead. */
+/**
+ * Legacy visibility helpers retained for API compatibility. Runtime disclosure
+ * accounting no longer uses Assistant prose recognition.
+ */
 export declare function hasVisibleText(content: readonly ContentBlockLike[]): boolean;
-/** @deprecated Runtime disclosure uses disclose_progress instead. */
+/** @deprecated Runtime disclosure is now the `disclose_progress` tool action. */
 export declare function isModelDisclosure(message: MessageLike): boolean;
+/**
+ * One turn-local disclosure interval: completed top-level work calls since the
+ * latest successful `disclose_progress` execution.
+ */
 export interface SilenceState {
+    /** Completed top-level work calls since the interval opened. */
     calls: number;
+    /** Call count where this interval's first reminder was actually delivered. */
     firstReminderAt: number | null;
+    /** Reminders delivered in this interval, and the budget index of the next one. */
     delivered: number;
 }
 export declare function createSilence(): SilenceState;
+/** Open a new reminder interval in place. */
 export declare function resetSilence(state: SilenceState): SilenceState;
+/**
+ * Count one completed top-level work call and report which reminder it carries.
+ * Nested calls inside a composite tool do not advance cadence.
+ */
 export declare function countCompletedCall(state: SilenceState, reminderAfterCalls: number, maxReminders: number, options?: {
     readonly nested?: boolean;
 }): number | null;
+/** Record that a reminder was actually delivered. */
 export declare function markReminderDelivered(state: SilenceState, calls: number, index: number): void;
 export interface ReminderCarrier<TNotice> {
     readonly kind: string;
     readonly additionalContexts?: readonly TNotice[];
 }
+/** Prepend one reminder without replacing any downstream decision fields. */
 export declare function withReminder<TNotice, TDecision extends ReminderCarrier<TNotice>>(decision: TDecision, reminder: TNotice): TDecision;
-export declare const DISCLOSURE_REMINDER_TEXT = "[disclosure] Call disclose_progress with a brief done/next/approach checkpoint, then continue unless blocked.";
-export declare const DISCLOSURE_REPEAT_TEXT = "Repeat reminder: no disclose_progress call has been observed in this interval.";
+/**
+ * Runtime reminder text is intentionally tiny. The standing behavioral contract
+ * lives in the `disclose_progress` tool schema, which the model already receives,
+ * so repeating field-format instructions here would spend tokens twice.
+ */
+export declare const DISCLOSURE_REMINDER_TEXT = "[disclosure] Call disclose_progress now with brief done, next, and approach; continue unless blocked.";
+export declare const DISCLOSURE_REPEAT_TEXT = "Repeat reminder: no disclose_progress call has been observed in this stretch.";
 export declare function reminderTextFor(index: number, activityFact?: string | null): string;
