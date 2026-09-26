@@ -22,7 +22,7 @@ The progress primitive remains model-authored. The runtime does not synthesize `
 The redesign is a replacement, not an additive layer.
 
 - The plugin installs **no standing system-prompt section**.
-- The tool has one short description and exactly three required string fields: `done`, `next`, and `approach`.
+- The tool has one short description and exactly three required string fields: `done`, `next`, and `approach`. The executor rejects whitespace-only values before resetting accounting; this preserves the old non-empty contract without adding parameter-description/schema tokens.
 - Parameter descriptions are intentionally omitted; the field names and tool description carry the contract.
 - A successful tool result has canonical value `null` and renders **zero model-facing content blocks**, avoiding an echo of text the model already authored in the call arguments.
 - The tool explicitly opts into parallel scheduling with `isConcurrencySafe: () => true`. DSH treats an omitted classifier as **exclusive**, so leaving it undefined would add a serial barrier around every checkpoint.
