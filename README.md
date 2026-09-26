@@ -30,7 +30,7 @@ The redesign is intentionally **replacement, not accumulation**:
 
 - no standing disclosure section is added to the system prompt;
 - one compact tool description is added;
-- the tool has only three required string fields: `done`, `next`, `approach`; the body rejects whitespace-only values without adding schema text;
+- the tool has only three required string fields: `done`, `next`, `approach`; its one-line description still names findings, phase/plan shifts, checks, blockers, and long work as useful checkpoint moments; the body rejects whitespace-only values without adding parameter-schema text;
 - those fields have no per-parameter descriptions;
 - successful tool output is canonical `null` and renders **no model-facing result text**, so the checkpoint is not echoed back into context;
 - the checkpoint explicitly opts into parallel scheduling; DSH otherwise treats an unspecified concurrency classifier as an exclusive barrier;
