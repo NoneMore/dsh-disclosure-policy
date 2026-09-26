@@ -49,8 +49,8 @@ The model-facing surface is deliberately small:
 ```text
 name: disclose_progress
 description:
-  Checkpoint long autonomous work: report done, next, and approach;
-  then continue unless blocked.
+  Brief update after findings, phase/plan shifts, checks, blockers, or long work:
+  done, next, approach; batch with work.
 
 parameters:
   done: string
