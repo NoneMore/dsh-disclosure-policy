@@ -253,7 +253,7 @@ test('disclose_progress resets cadence and restores the reminder budget without 
   }
 })
 
-test('nested PTC disclose_progress makes the whole run_code model step a checkpoint boundary', { skip }, async () => {
+test('nested PTC disclose_progress counts the enclosing run_code in the fresh interval', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'ptc-reset' }
   const parent = Symbol('run_code')
@@ -270,13 +270,12 @@ test('nested PTC disclose_progress makes the whole run_code model step a checkpo
     approach: 'Let run_code finish, then verify.',
   }, { parent })
 
-  // The enclosing top-level transport belongs to the same Assistant step as
-  // the nested checkpoint, so settlement order cannot charge it to the fresh interval.
+  // The enclosing top-level transport is work performed after the checkpoint,
+  // so it starts consuming the fresh interval even though it settles in the
+  // same Assistant step. Reminder delivery itself remains fenced to a later step.
   assert.equal((await harness.postExecute(session, { kind: 'accept' }, { name: 'run_code' })).additionalContexts, undefined)
 
   harness.emit(session, assistantStep(3))
-  assert.equal((await harness.postExecute(session, { kind: 'accept' }, { name: 'read' })).additionalContexts, undefined)
-  harness.emit(session, assistantStep(4))
   assertNoticeShape(await harness.postExecute(session, { kind: 'accept' }, { name: 'read' }), 0)
 })
 
@@ -301,10 +300,40 @@ test('native progress and parallel sibling tools form one settlement-order-indep
     approach: 'Read and compare it.',
   })
 
-  // A sibling settling after the successful checkpoint is still part of the same
-  // model step and is not charged to the newly opened interval.
+  // A sibling settling after the successful checkpoint advances the newly
+  // opened interval, but the current step still cannot receive another reminder.
   assert.equal((await harness.postExecute(session, { kind: 'accept' }, { name: 'search' })).additionalContexts, undefined)
 
+  harness.emit(session, assistantStep(2))
+  assertNoticeShape(await harness.postExecute(session, { kind: 'accept' }, { name: 'read' }), 0)
+})
+
+test('same-step sibling work survives a checkpoint reset regardless of settlement order', { skip }, async () => {
+  const harness = createHarness()
+  const session = { id: 'checkpoint-sibling-carry' }
+  host.apply(harness.ctx, { reminderAfterCalls: 4, maxReminders: 1, activityWindowSize: 0 })
+  harness.emit(session, TURN.start(1))
+  harness.emit(session, assistantStep(1, [
+    { type: 'tool-call', name: DISCLOSURE_TOOL_NAME },
+    { type: 'tool-call', name: 'read' },
+  ]))
+
+  for (let i = 0; i < 3; i += 1) {
+    assert.equal((await harness.postExecute(session, { kind: 'accept' }, { name: 'read' })).additionalContexts, undefined)
+  }
+
+  await disclose(harness, session, {
+    done: 'Finished the first parallel reads.',
+    next: 'Continue the same batch.',
+    approach: 'Run the remaining searches, then verify.',
+  })
+
+  for (let i = 0; i < 3; i += 1) {
+    assert.equal((await harness.postExecute(session, { kind: 'accept' }, { name: 'search' })).additionalContexts, undefined)
+  }
+
+  // All six same-step siblings belong to the fresh interval. The reminder is
+  // intentionally deferred until the model has a later step on which to observe it.
   harness.emit(session, assistantStep(2))
   assertNoticeShape(await harness.postExecute(session, { kind: 'accept' }, { name: 'read' }), 0)
 })
