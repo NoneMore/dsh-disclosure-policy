@@ -25,22 +25,28 @@ import {
 } from '../lib/policy.js'
 
 test('defaults and zero-disable semantics remain stable', () => {
-  const defaults = { reminderAfterCalls: 8, maxReminders: 3, activityWindowSize: 16, inspectionHintMinInspections: 8 }
+  const defaults = { reminderAfterCalls: 8, maxReminderIntervalCalls: 64, activityWindowSize: 16, inspectionHintMinInspections: 8 }
   assert.deepEqual(DEFAULT_CONFIG, defaults)
   assert.deepEqual(resolveConfig(), defaults)
   assert.deepEqual(resolveConfig({ reminderAfterCalls: 0 }), { ...defaults, reminderAfterCalls: 0 })
-  assert.deepEqual(resolveConfig({ maxReminders: 0 }), { ...defaults, maxReminders: 0 })
+  assert.deepEqual(resolveConfig({ maxReminderIntervalCalls: 128 }), { ...defaults, maxReminderIntervalCalls: 128 })
 })
 
 test('invalid numeric configuration fails closed', () => {
   for (const invalid of [-1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, '8']) {
     assert.throws(() => resolveConfig({ reminderAfterCalls: invalid }), /reminderAfterCalls/)
-    assert.throws(() => resolveConfig({ maxReminders: invalid }), /maxReminders/)
+  }
+  for (const invalid of [null, 0, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1, '8']) {
+    assert.throws(() => resolveConfig({ maxReminderIntervalCalls: invalid }), /maxReminderIntervalCalls/)
+    assert.throws(() => resolveConfig({ inspectionHintMinInspections: invalid }), /inspectionHintMinInspections/)
   }
   for (const invalid of [null, -1, 1.5, Number.NaN, Number.POSITIVE_INFINITY, Number.MAX_SAFE_INTEGER + 1, '8']) {
     assert.throws(() => resolveConfig({ activityWindowSize: invalid }), /activityWindowSize/)
-    assert.throws(() => resolveConfig({ inspectionHintMinInspections: invalid }), /inspectionHintMinInspections/)
   }
+  assert.throws(
+    () => resolveConfig({ reminderAfterCalls: 8, maxReminderIntervalCalls: 4 }),
+    /maxReminderIntervalCalls.*reminderAfterCalls/,
+  )
   assert.throws(() => resolveConfig({ inspectionHintMinInspections: 0 }), /inspectionHintMinInspections/)
   assert.throws(() => resolveConfig({ activityWindowSize: 4 }), /inspectionHintMinInspections.*activityWindowSize/)
 })
@@ -116,49 +122,66 @@ test('other operations occupy the activity window without pretending to be inspe
   assert.equal(activity.inspect, 0)
 })
 
-test('one interval spends reminder budget at the configured cadence', () => {
+test('one interval backs off without a hard reminder cap', () => {
   const state = createSilence()
-  const due = []
-  for (let call = 1; call <= 32; call += 1) {
-    const index = countCompletedCall(state, 8, 3)
-    if (index !== null) markReminderDelivered(state, state.calls, index)
-    due.push(index)
+  const carriers = []
+  for (let call = 1; call <= 260; call += 1) {
+    const index = countCompletedCall(state, 8, 64)
+    if (index !== null) {
+      carriers.push([call, index])
+      markReminderDelivered(state, state.calls, index)
+    }
   }
-  assert.deepEqual(due, [
-    ...Array(7).fill(null),
-    0, ...Array(7).fill(null),
-    1, ...Array(7).fill(null),
-    2, ...Array(8).fill(null),
+  assert.deepEqual(carriers, [
+    [8, 0],
+    [24, 1],
+    [56, 2],
+    [120, 3],
+    [184, 4],
+    [248, 5],
   ])
+  assert.equal(state.delivered, 6, 'reminders continue past the former default budget of three')
 })
 
-test('resetSilence restores cadence and budget', () => {
+test('resetSilence restores cadence and backoff', () => {
   const state = createSilence()
   for (let call = 0; call < 8; call += 1) {
-    const index = countCompletedCall(state, 8, 3)
+    const index = countCompletedCall(state, 8, 64)
     if (index !== null) markReminderDelivered(state, state.calls, index)
   }
-  assert.deepEqual(state, { calls: 8, firstReminderAt: 8, delivered: 1 })
+  assert.deepEqual(state, { calls: 8, lastReminderAt: 8, delivered: 1 })
   resetSilence(state)
-  assert.deepEqual(state, { calls: 0, firstReminderAt: null, delivered: 0 })
+  assert.deepEqual(state, { calls: 0, lastReminderAt: null, delivered: 0 })
 })
 
 test('nested calls do not advance cadence', () => {
   const state = createSilence()
   for (let i = 0; i < 20; i += 1) {
-    assert.equal(countCompletedCall(state, 1, 3, { nested: true }), null)
+    assert.equal(countCompletedCall(state, 1, 64, { nested: true }), null)
   }
   assert.equal(state.calls, 0)
 })
 
-test('zero threshold or empty budget disables reminders without disabling counting', () => {
-  for (const config of [{ reminderAfterCalls: 0, maxReminders: 3 }, { reminderAfterCalls: 8, maxReminders: 0 }]) {
-    const state = createSilence()
-    for (let call = 0; call < 20; call += 1) {
-      assert.equal(countCompletedCall(state, config.reminderAfterCalls, config.maxReminders), null)
-    }
-    assert.equal(state.calls, 20)
+test('zero threshold disables reminders without disabling counting', () => {
+  const state = createSilence()
+  for (let call = 0; call < 20; call += 1) {
+    assert.equal(countCompletedCall(state, 0, 64), null)
   }
+  assert.equal(state.calls, 20)
+})
+
+test('a capped backoff can stay frequent without ever exhausting', () => {
+  const state = createSilence()
+  const carriers = []
+  for (let call = 1; call <= 10; call += 1) {
+    const index = countCompletedCall(state, 2, 2)
+    if (index !== null) {
+      carriers.push(call)
+      markReminderDelivered(state, state.calls, index)
+    }
+  }
+  assert.deepEqual(carriers, [2, 4, 6, 8, 10])
+  assert.equal(state.delivered, 5)
 })
 
 test('reminder text composes activity and repeat facts without publishing counters', () => {
