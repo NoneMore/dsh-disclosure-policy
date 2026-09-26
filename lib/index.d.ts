@@ -11,17 +11,9 @@ declare module '@deepseek-ai/dsh-llm' {
 export declare const name = "disclosure-policy";
 export declare const inject: string[];
 export interface Config {
-    /**
-     * Completed top-level tool calls that advance the reminder cadence by one
-     * position. `0` disables runtime reminders while keeping the standing policy.
-     * Default 8.
-     */
+    /** Completed top-level non-disclosure calls per reminder period. 0 disables reminders. Default 8. */
     reminderAfterCalls?: number;
-    /**
-     * Reminder budget for one disclosure interval: at most this many notices, one
-     * every `reminderAfterCalls` completed top-level calls. `1` is the historical
-     * one-shot cadence; `0` disables runtime reminders. Default 3.
-     */
+    /** Reminder budget per disclosure interval. 0 disables reminders. Default 3. */
     maxReminders?: number;
     /** Recent operations retained, including nested native tools; 0 disables hints alone. Default 16. */
     activityWindowSize?: number;
@@ -30,23 +22,15 @@ export interface Config {
 }
 export declare const Config: z<Config>;
 /**
- * `dsh-disclosure-policy` host plugin.
+ * Host adapter.
  *
- * Three extension points:
+ * Disclosure is a model-authored structured tool action rather than Assistant
+ * prose. That removes the ambiguity between "progress update" and "terminal
+ * response": a successful disclose_progress call resets the interval and the
+ * agent naturally continues through the normal tool loop.
  *
- * - `session/event` maintains one turn-local disclosure interval per session from
- *   first-party durable facts;
- * - `tools/post-execute` counts settled top-level calls and appends the due
- *   soft reminder as next-step context, at most `maxReminders` per interval;
- * - `agent/turn-stopping` repairs one narrow failure mode: after a delivered
- *   reminder, a standalone structured disclosure must not accidentally become
- *   the terminal response while executable work was meant to continue.
- *
- * The standing policy is a static prompt section. No guard is registered and no
- * task state is read or written. Stop-boundary steering is bounded to one extra
- * step per turn and only after a reminder-triggered standalone disclosure:
- * see ADR-0001 and ADR-0003. The runtime keeps live projections instead of
- * scanning session history, which current DSH policy requires for new code; a
- * hot reload mid-turn therefore starts accounting at the next `turn/start`.
+ * Context cost stays bounded: no standing prompt section is installed, the tool
+ * declaration is intentionally compact, its successful result renders no model
+ * text, and reminders contain no format template.
  */
 export declare function apply(ctx: Context, rawConfig?: Config): void;
