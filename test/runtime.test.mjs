@@ -256,7 +256,7 @@ test('the fixed model-facing declaration stays deliberately small and result tex
 test('empty checkpoint fields fail without resetting reminder accounting', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'empty-progress' }
-  host.apply(harness.ctx, { reminderAfterCalls: 1, maxReminders: 2, activityWindowSize: 0 })
+  host.apply(harness.ctx, { reminderAfterCalls: 1, maxReminderIntervalCalls: 1, activityWindowSize: 0 })
   harness.emit(session, TURN.start(1))
 
   harness.emit(session, assistantStep(1))
@@ -282,14 +282,14 @@ test('empty checkpoint fields fail without resetting reminder accounting', { ski
   assertNoticeShape(await harness.postExecute(session), 1)
 })
 
-test('the configured cadence yields repeats up to the interval budget', { skip }, async () => {
+test('the configured cadence backs off without ever exhausting', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'cadence' }
-  host.apply(harness.ctx, { reminderAfterCalls: 8, maxReminders: 3 })
+  host.apply(harness.ctx, { reminderAfterCalls: 8, maxReminderIntervalCalls: 64 })
   harness.emit(session, TURN.start(1))
 
   const carriers = []
-  for (let call = 1; call <= 32; call += 1) {
+  for (let call = 1; call <= 260; call += 1) {
     harness.emit(session, assistantStep(call))
     const decision = await harness.postExecute(session)
     if (reminders(decision).length === 0) {
@@ -299,13 +299,13 @@ test('the configured cadence yields repeats up to the interval budget', { skip }
       assertNoticeShape(decision, carriers.length - 1)
     }
   }
-  assert.deepEqual(carriers, [8, 16, 24])
+  assert.deepEqual(carriers, [8, 24, 56, 120, 184, 248])
 })
 
 test('Assistant prose no longer resets disclosure accounting', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'prose-does-not-reset' }
-  host.apply(harness.ctx, { reminderAfterCalls: 3, maxReminders: 1, activityWindowSize: 0 })
+  host.apply(harness.ctx, { reminderAfterCalls: 3, maxReminderIntervalCalls: 3, activityWindowSize: 0 })
   harness.emit(session, TURN.start(1))
 
   harness.emit(session, assistantStep(1))
@@ -323,7 +323,7 @@ test('Assistant prose no longer resets disclosure accounting', { skip }, async (
 test('disclose_progress resets cadence and restores the reminder budget without counting itself', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'tool-reset' }
-  host.apply(harness.ctx, { reminderAfterCalls: 3, maxReminders: 1, activityWindowSize: 0 })
+  host.apply(harness.ctx, { reminderAfterCalls: 3, maxReminderIntervalCalls: 3, activityWindowSize: 0 })
   harness.emit(session, TURN.start(1))
 
   for (let step = 1; step <= 3; step += 1) {
@@ -351,7 +351,7 @@ test('disclose_progress resets cadence and restores the reminder budget without 
 test('native progress and parallel sibling tools form one settlement-order-independent checkpoint step', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'native-parallel-checkpoint' }
-  host.apply(harness.ctx, { reminderAfterCalls: 1, maxReminders: 1, activityWindowSize: 0 })
+  host.apply(harness.ctx, { reminderAfterCalls: 1, maxReminderIntervalCalls: 1, activityWindowSize: 0 })
   harness.emit(session, TURN.start(1))
   harness.emit(session, assistantStep(1, [
     { type: 'tool-call', name: DISCLOSURE_TOOL_NAME },
@@ -380,7 +380,7 @@ test('native progress and parallel sibling tools form one settlement-order-indep
 test('same-step sibling work survives a checkpoint reset regardless of settlement order', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'checkpoint-sibling-carry' }
-  host.apply(harness.ctx, { reminderAfterCalls: 4, maxReminders: 1, activityWindowSize: 0 })
+  host.apply(harness.ctx, { reminderAfterCalls: 4, maxReminderIntervalCalls: 4, activityWindowSize: 0 })
   harness.emit(session, TURN.start(1))
   harness.emit(session, assistantStep(1, [
     { type: 'tool-call', name: DISCLOSURE_TOOL_NAME },
@@ -410,7 +410,7 @@ test('same-step sibling work survives a checkpoint reset regardless of settlemen
 test('a failed direct progress attempt suppresses stale same-step reminders but does not reset accounting', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'failed-progress-attempt' }
-  host.apply(harness.ctx, { reminderAfterCalls: 1, maxReminders: 1, activityWindowSize: 0 })
+  host.apply(harness.ctx, { reminderAfterCalls: 1, maxReminderIntervalCalls: 1, activityWindowSize: 0 })
   harness.emit(session, TURN.start(1))
   harness.emit(session, assistantStep(1, [
     { type: 'tool-call', name: DISCLOSURE_TOOL_NAME },
@@ -443,7 +443,7 @@ test('a progress checkpoint preserves recent native activity but is excluded fro
   const session = { id: 'preserve-activity' }
   host.apply(harness.ctx, {
     reminderAfterCalls: 1,
-    maxReminders: 1,
+    maxReminderIntervalCalls: 1,
     activityWindowSize: 4,
     inspectionHintMinInspections: 2,
   })
@@ -468,7 +468,7 @@ test('inspection-heavy activity adds only the compact factual suffix', { skip },
   const session = { id: 'activity-hint' }
   host.apply(harness.ctx, {
     reminderAfterCalls: 3,
-    maxReminders: 1,
+    maxReminderIntervalCalls: 3,
     activityWindowSize: 4,
     inspectionHintMinInspections: 3,
   })
@@ -484,7 +484,7 @@ test('inspection-heavy activity adds only the compact factual suffix', { skip },
 test('a mutation-oriented operation suppresses the inspection suffix', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'activity-mutation' }
-  host.apply(harness.ctx, { reminderAfterCalls: 3, maxReminders: 1 })
+  host.apply(harness.ctx, { reminderAfterCalls: 3, maxReminderIntervalCalls: 3 })
   harness.emit(session, TURN.start(1))
   harness.emit(session, assistantStep(1))
 
@@ -496,7 +496,7 @@ test('a mutation-oriented operation suppresses the inspection suffix', { skip },
 test('one model step can deliver at most one reminder even across several cadence periods', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'parallel-step' }
-  host.apply(harness.ctx, { reminderAfterCalls: 8, maxReminders: 3, activityWindowSize: 0 })
+  host.apply(harness.ctx, { reminderAfterCalls: 8, maxReminderIntervalCalls: 64, activityWindowSize: 0 })
   harness.emit(session, TURN.start(1))
   harness.emit(session, assistantStep(1))
 
@@ -516,7 +516,7 @@ test('one model step can deliver at most one reminder even across several cadenc
 test('failed, denied, and blocked ordinary outcomes still advance cadence', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'outcomes' }
-  host.apply(harness.ctx, { reminderAfterCalls: 3, maxReminders: 1, activityWindowSize: 0 })
+  host.apply(harness.ctx, { reminderAfterCalls: 3, maxReminderIntervalCalls: 3, activityWindowSize: 0 })
   harness.emit(session, TURN.start(1))
   harness.emit(session, assistantStep(1))
 
@@ -530,7 +530,7 @@ test('failed, denied, and blocked ordinary outcomes still advance cadence', { sk
 test('a throwing downstream policy advances cadence but does not spend the reminder slot', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'throwing-policy' }
-  host.apply(harness.ctx, { reminderAfterCalls: 2, maxReminders: 1, activityWindowSize: 0 })
+  host.apply(harness.ctx, { reminderAfterCalls: 2, maxReminderIntervalCalls: 2, activityWindowSize: 0 })
   harness.emit(session, TURN.start(1))
   harness.emit(session, assistantStep(1))
 
@@ -543,27 +543,21 @@ test('a throwing downstream policy advances cadence but does not spend the remin
   assertNoticeShape(await harness.postExecute(session), 0)
 })
 
-test('zero threshold or empty budget disables reminders while leaving disclose_progress available', { skip }, async () => {
-  for (const config of [
-    { reminderAfterCalls: 0, maxReminders: 3 },
-    { reminderAfterCalls: 8, maxReminders: 0 },
-  ]) {
-    const harness = createHarness()
-    const session = { id: `disabled-${config.reminderAfterCalls}-${config.maxReminders}` }
-    host.apply(harness.ctx, { ...config, activityWindowSize: 0 })
-    harness.emit(session, TURN.start(1))
-    for (let step = 1; step <= 20; step += 1) {
-      harness.emit(session, assistantStep(step))
-      assert.equal((await harness.postExecute(session)).additionalContexts, undefined)
-    }
-    assert.ok(harness.tools.has(DISCLOSURE_TOOL_NAME))
+test('zero threshold disables reminders while leaving disclose_progress available', { skip }, async () => {
+  const harness = createHarness()
+  const session = { id: 'disabled-zero-threshold' }
+  host.apply(harness.ctx, { reminderAfterCalls: 0, maxReminderIntervalCalls: 64, activityWindowSize: 0 })
+  harness.emit(session, TURN.start(1))
+  for (let step = 1; step <= 20; step += 1) {
+    harness.emit(session, assistantStep(step))
+    assert.equal((await harness.postExecute(session)).additionalContexts, undefined)
   }
+  assert.deepEqual([...harness.tools.keys()], [DISCLOSURE_TOOL_NAME])
 })
-
 test('turn end discards accounting and a new turn starts clean', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'turn-lifecycle' }
-  host.apply(harness.ctx, { reminderAfterCalls: 2, maxReminders: 1, activityWindowSize: 0 })
+  host.apply(harness.ctx, { reminderAfterCalls: 2, maxReminderIntervalCalls: 2, activityWindowSize: 0 })
   harness.emit(session, TURN.start(1))
   harness.emit(session, assistantStep(1))
   await harness.postExecute(session)
@@ -581,7 +575,7 @@ test('turn end discards accounting and a new turn starts clean', { skip }, async
 test('a blocked downstream decision keeps its shape and gets the reminder context', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'composition' }
-  host.apply(harness.ctx, { reminderAfterCalls: 1, maxReminders: 1, activityWindowSize: 0 })
+  host.apply(harness.ctx, { reminderAfterCalls: 1, maxReminderIntervalCalls: 1, activityWindowSize: 0 })
   harness.emit(session, TURN.start(1))
   harness.emit(session, assistantStep(1))
 
