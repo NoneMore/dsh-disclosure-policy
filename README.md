@@ -143,6 +143,7 @@ npm test
 See:
 
 - [ADR-0007](docs/adr/0007-structured-progress-tool.md) — why disclosure is now a tool primitive and how context overhead is bounded.
+- [ADR-0009](docs/adr/0009-backoff-without-hard-cap.md) — why reminder rate is bounded without a total reminder cap.
 - [DESIGN.md](docs/DESIGN.md) — current state machine and reminder design.
 - [HOW-IT-WORKS.md](docs/HOW-IT-WORKS.md) — implementation walkthrough.
 - [SOURCES.md](docs/SOURCES.md) — DSH contract evidence.
