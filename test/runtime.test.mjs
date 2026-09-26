@@ -158,6 +158,35 @@ test('the fixed model-facing declaration stays deliberately small and result tex
   assert.deepEqual(tool.output.render(args, value), [], 'do not echo progress into model context')
 })
 
+test('empty checkpoint fields fail without resetting reminder accounting', { skip }, async () => {
+  const harness = createHarness()
+  const session = { id: 'empty-progress' }
+  host.apply(harness.ctx, { reminderAfterCalls: 1, maxReminders: 2, activityWindowSize: 0 })
+  harness.emit(session, TURN.start(1))
+
+  harness.emit(session, assistantStep(1))
+  assertNoticeShape(await harness.postExecute(session), 0)
+
+  harness.emit(session, assistantStep(2, [{ type: 'tool-call', name: DISCLOSURE_TOOL_NAME }]))
+  await assert.rejects(
+    harness.executeTool(session, DISCLOSURE_TOOL_NAME, {
+      done: ' ',
+      next: 'Continue.',
+      approach: 'Read the next file.',
+    }),
+    /must be non-empty/,
+  )
+  assert.equal((await harness.postExecute(
+    session,
+    { kind: 'accept' },
+    { name: DISCLOSURE_TOOL_NAME },
+    { result: { isError: true, content: [], value: null } },
+  )).additionalContexts, undefined)
+
+  harness.emit(session, assistantStep(3))
+  assertNoticeShape(await harness.postExecute(session), 1)
+})
+
 test('the configured cadence yields repeats up to the interval budget', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'cadence' }
