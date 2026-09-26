@@ -8,7 +8,7 @@ The plugin supports the human's job during execution — **supervision** — rat
 - a **bounded soft reminder cadence** nudges the model again while a disclosure interval keeps producing tool calls, up to a fixed budget per interval;
 - an **activity hint** can add objective context from a rolling window of recent tool operations, independently of disclosure boundaries.
 
-Disclosure is model-authored and best-effort. The plugin never denies a tool call, never rewrites task state, and never forces another step. See [`docs/adr/0001-supervision-over-enforcement.md`](docs/adr/0001-supervision-over-enforcement.md), [`docs/adr/0003-model-authored-disclosure.md`](docs/adr/0003-model-authored-disclosure.md), and [`docs/adr/0004-bounded-repeat-reminders.md`](docs/adr/0004-bounded-repeat-reminders.md).
+Disclosure is model-authored and best-effort. The plugin never denies a tool call or rewrites task state. It may force **one** extra step at the turn-stopping boundary only when a delivered reminder is followed by a standalone recognized disclosure with no tool call, preventing the disclosure itself from accidentally ending unfinished work. See [`docs/adr/0001-supervision-over-enforcement.md`](docs/adr/0001-supervision-over-enforcement.md), [`docs/adr/0003-model-authored-disclosure.md`](docs/adr/0003-model-authored-disclosure.md), and [`docs/adr/0004-bounded-repeat-reminders.md`](docs/adr/0004-bounded-repeat-reminders.md).
 
 Target baseline: **DeepSeek Harness 0.1.7-rc.1**. This checkout ships prebuilt `lib/` JavaScript so it can be installed without compiling TypeScript first.
 
@@ -36,7 +36,7 @@ Approach: Compare the original reward indices with the replay selections.
 
 The corresponding Chinese label set is `披露 / 已做 / 将做 / 做法`. Use one complete label set, with `:` or `：` separators, and concise field contents in any language. Send the structure directly: fenced or indented code blocks, quotations, extra prose, blank internal lines, mixed labels, and missing or empty fields do not qualify. The fences above illustrate the format; an actual disclosure must have no fence.
 
-`Done` describes recent work and its result or remaining uncertainty; `Next` states the immediate intended action; `Approach` states concrete operations or verification. Include plan/constraint changes and anything worth intervention where relevant. No new conclusion is required. An opening disclosure may honestly say execution has not started, and a blocker may name a dependency being awaited plus a conditional follow-up.
+`Done` describes recent work and its result or remaining uncertainty; `Next` states the immediate intended action; `Approach` states concrete operations or verification. Include plan/constraint changes and anything worth intervention where relevant. No new conclusion is required. An opening disclosure may honestly say execution has not started, and a blocker may name a dependency being awaited plus a conditional follow-up. A disclosure is a checkpoint rather than a turn boundary: when executable work remains, the model should issue the next tool call(s) in the same assistant message as those four visible lines.
 
 No opening preamble is required. The model asks the user a question only when the execution brief does not let it continue, and it never exposes private chain-of-thought.
 
@@ -76,6 +76,7 @@ The reminder asks for the same concise four-line structure. A qualifying activit
 | Static disclosure policy | `systemPrompt.section({ order: 10150 })` |
 | Turn and structured-disclosure observation | `session/event` live projection |
 | Count calls/activity and deliver the due reminder | `tools/post-execute` → `PostToolDecision.additionalContexts` |
+| Repair reminder-caused disclosure-only stop | `agent/turn-stopping` → one bounded `agent.steer(...)` |
 
 ## Configuration
 
@@ -105,7 +106,7 @@ DSH patch rows replace the `config` value rather than deep-merging it. Both conf
 
 ## What this plugin deliberately does not do
 
-It does not generate disclosure from runtime facts, judge whether model prose is informative, discover or validate the execution brief, monitor or enforce `todo_write` freshness, rewrite task state, register `ctx.tools.guard()`, steer from `agent/turn-stopping` or any `session/event` callback, infer semantic task progress from tool traffic, carry live state in the system prompt, add custom durable events, or ship a client component. The coarse tool-name activity classes only contextualize a model-authored disclosure request; they are not themselves a progress judgment.
+It does not generate disclosure from runtime facts, judge whether model prose is informative, discover or validate the execution brief, monitor or enforce `todo_write` freshness, rewrite task state, register `ctx.tools.guard()`, steer from any `session/event` callback, infer semantic task progress from tool traffic, carry live state in the system prompt, add custom durable events, or ship a client component. Its only stop-boundary steering is the one-shot repair for a reminder-triggered standalone disclosure described above. The coarse tool-name activity classes only contextualize a model-authored disclosure request; they are not themselves a progress judgment.
 
 Native task accounting stays separate from disclosure. Installing this plugin changes nothing about the `todo_write` contract.
 
@@ -123,11 +124,11 @@ Replace `web` with your profile name if needed.
 
 ## Limitations
 
-- **Best-effort by construction.** A model that ignores the standing policy and the whole reminder cadence can stay silent for the rest of a turn. That is the accepted cost of removing enforcement.
+- **Best-effort disclosure, bounded continuation repair.** A model that ignores the standing policy and the whole reminder cadence can still stay silent. The runtime only repairs the observed failure where a reminder-triggered standalone disclosure would otherwise close the turn; that repair is limited to one extra step per turn.
 - **The budget is per disclosure interval, and intervals are turn-local.** `turn/end` discards the state, so a model that keeps opening fresh turns is not covered by the cadence; this is a documented limitation rather than a guarantee.
 - **Structure is checked; content quality is not.** A one-word acknowledgement cannot reset the interval, but complete structures containing vague, repeated, or false prose still can. Useful unstructured prose does not reset it either. There is no semantic review, novelty test, or deduplication (ADR-0005).
 - **Live projection, not history reconstruction.** Current DSH deprecates synchronous `Session.eventAt()`, `snapshotEvents()`, and `ownEvents()` and prohibits new production calls to them. On hot reload mid-turn, no state exists until the next observed `turn/start`, so accounting restarts at the next turn rather than scanning the log.
-- **Boundaries, not interruptions.** Nothing in DSH can inject text while a single long tool call is running. The reminder can only be attached when a call settles, so it lands on the *next* model step.
+- **Boundaries, not interruptions.** Nothing in DSH can inject text while a single long tool call is running. The reminder can only be attached when a call settles, so it lands on the *next* model step. The continuation repair likewise runs only at `agent/turn-stopping`, after a model step has already chosen to stop.
 - **Counting is a failsafe, not a semantic trigger.** `reminderAfterCalls` measures completed calls since recognized disclosure. The semantic obligation lives in the standing policy.
 - **Activity shape is intentionally coarse.** Classification uses only the structured tool name. Shell commands and unknown/composite tools remain `other`, and the inspection-only suffix reports requested operation types rather than claiming that a file really changed or that a verification really proved anything.
 - **The prompt service is optional.** The plugin hard-injects only `tools` and probes `ctx.get('systemPrompt')`. A deployment that installs a complete replacement system prompt may suppress the section; the reminder still works.
