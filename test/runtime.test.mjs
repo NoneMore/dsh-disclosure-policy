@@ -128,6 +128,7 @@ test('the plugin registers one compact progress tool and only two runtime listen
   const tool = harness.tools.get(DISCLOSURE_TOOL_NAME)
   assert.equal(tool.description, DISCLOSURE_TOOL_DESCRIPTION)
   assert.equal(tool.deferLoading, undefined)
+  assert.equal(tool.isConcurrencySafe, undefined, 'progress reporting must not serialize sibling work')
   assert.deepEqual(Object.keys(tool.parameters.properties).sort(), ['approach', 'done', 'next'])
   assert.deepEqual(tool.parameters.required.sort(), ['approach', 'done', 'next'])
   for (const parameter of Object.values(tool.parameters.properties)) {
