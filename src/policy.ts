@@ -136,9 +136,9 @@ export function inspectionActivityFact(state: ActivityState, minimumInspections:
 
 /** Resolve and validate behavioral options. */
 export function resolveConfig(input: Partial<DisclosureConfig> = {}): DisclosureConfig {
-  const reminderAfterCalls = input.reminderAfterCalls ?? DEFAULT_CONFIG.reminderAfterCalls
-  const maxReminderIntervalCalls = input.maxReminderIntervalCalls ?? DEFAULT_CONFIG.maxReminderIntervalCalls
   const {
+    reminderAfterCalls = DEFAULT_CONFIG.reminderAfterCalls,
+    maxReminderIntervalCalls = DEFAULT_CONFIG.maxReminderIntervalCalls,
     activityWindowSize = DEFAULT_CONFIG.activityWindowSize,
     inspectionHintMinInspections = DEFAULT_CONFIG.inspectionHintMinInspections,
   } = input
