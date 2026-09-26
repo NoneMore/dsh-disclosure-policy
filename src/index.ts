@@ -215,6 +215,8 @@ function installForAgent(
 /** Whether this live agent should receive the disclosure surface. */
 function isEligibleAgent(ctx: Context, agent: Agent): boolean {
   if (!ctx.agents.roots().includes(agent)) return false
+  const { origin, delegationDepth } = agent.session.header
+  if (origin === 'subagent' || (delegationDepth ?? 0) > 0) return false
   // ToolRuntime inserts reserved run_code into the effective view for both
   // `ptc` and `both`, but not for exact `native` presentation.
   return agent.ctx.tools.get(RUN_CODE_NAME, agent) === undefined
