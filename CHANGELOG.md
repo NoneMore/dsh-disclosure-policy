@@ -9,6 +9,8 @@
 - Keep the no-I/O checkpoint explicitly concurrency-safe so it does not become DSH's fail-closed exclusive scheduling barrier; when work remains, guidance asks an eligible native root to batch the checkpoint with the next work tool(s).
 - Fix checkpoint-step accounting so top-level ordinary siblings are carried into the fresh disclosure interval instead of disappearing when batched with `disclose_progress`; later same-step siblings keep advancing cadence while reminder delivery remains fenced to a later model step.
 - Fix the pre-existing parallel cadence gap by fencing reminder delivery with `assistant/message.data.step`: one model step can carry at most one reminder even if a large fan-out crosses several cadence periods.
+- Replace the finite `maxReminders` budget with capped exponential backoff. Defaults now space reminders by 8, 16, 32, then 64 additional top-level calls and continue every 64 calls thereafter, so a silent model cannot permanently outwait the policy. See ADR-0009.
+- Remove `maxReminders` from current configuration and add `maxReminderIntervalCalls` (default `64`). `reminderAfterCalls: 0` is the single runtime-reminder disable switch; when enabled, the maximum interval must be at least the initial interval.
 - Retain ADR-0006's rolling activity window across progress checkpoints. The progress tool itself is excluded from activity; the optional inspection-heavy suffix is shortened to one factual sentence.
 - Drop the now-unused `dsh-system-prompt` direct peer/dev dependency. Keep `dsh-agent` as a direct peer/dev dependency because ADR-0008 uses the public live Agent registry for root/child identity.
 
