@@ -28,8 +28,8 @@ The legacy `hasVisibleText()` and `isModelDisclosure()` exports remain under `./
 
 The redesign is intentionally **replacement, not accumulation**:
 
-- no standing disclosure section is added to the system prompt;
-- one compact tool description is added;
+- one one-sentence standing instruction is added only for eligible native roots, asking for proactive semantic checkpoints without waiting for the watchdog;
+- one compact tool description is added and now says to update proactively;
 - the tool has only three required string fields: `done`, `next`, `approach`; its one-line description still names findings, phase/plan shifts, checks, blockers, and long work as useful checkpoint moments; the body rejects whitespace-only values without adding parameter-schema text;
 - those fields have no per-parameter descriptions;
 - successful tool output is canonical `null` and renders **no model-facing result text**, so the checkpoint is not echoed back into context;
@@ -38,7 +38,7 @@ The redesign is intentionally **replacement, not accumulation**:
 - reminders are one short sentence and contain no four-line template;
 - the optional activity suffix is a single compact factual sentence.
 
-Tests enforce size ceilings for the fixed model-facing declaration/reminder text and inspect the registered schema so accidental prompt growth fails CI.
+Tests enforce size ceilings for the standing instruction, fixed model-facing declaration, their combined fixed context, and reminder text so accidental prompt growth fails CI.
 
 `deferLoading` is deliberately not used. Eligibility is handled earlier by Agent-scoped registration: only an exact-native runtime root receives the tool at all, while PTC/both agents and runtime children receive no declaration or reminder listeners. Eligible native roots still get the same compact fixed schema.
 
@@ -46,7 +46,7 @@ Tests enforce size ceilings for the fixed model-facing declaration/reminder text
 
 The plugin is **native-root-only**:
 
-- a top-level Agent whose effective tool presentation is exactly `native` receives `disclose_progress` plus cadence/activity listeners;
+- a top-level Agent whose effective tool presentation is exactly `native` receives the standing instruction, `disclose_progress`, and cadence/activity listeners;
 - an Agent presenting `ptc` or `both` receives none of this plugin's model-facing or accounting surface;
 - a runtime child/subagent receives none of it, even when that child presents tools natively;
 - a cold-resumed session marked as subagent lineage (`origin: subagent` or positive `delegationDepth`) also remains excluded even if it currently appears as a runtime root.
@@ -85,7 +85,7 @@ Shell/composite tools remain `other`; the plugin does not parse arbitrary comman
 
 | Option | Default | Meaning |
 |---|---:|---|
-| `reminderAfterCalls` | `8` | Top-level non-disclosure calls before the first reminder. `0` disables reminders. |
+| `reminderAfterCalls` | `8` | Top-level non-disclosure calls before the first reminder. `0` disables runtime reminders only; the standing instruction and tool remain. |
 | `maxReminderIntervalCalls` | `64` | Maximum spacing between repeat reminders after exponential backoff. Does not limit total reminders. |
 | `activityWindowSize` | `16` | Recent operations retained for the activity hint. `0` disables hints only. |
 | `inspectionHintMinInspections` | `8` | Minimum inspection/search operations required for the hint. |
@@ -114,7 +114,7 @@ The runtime only verifies that the model invoked the structured progress primiti
 - **A single long tool call is still silent.** DSH can inject reminders only at tool/step boundaries.
 - **The model can ignore reminders.** Disclosure remains best-effort.
 - **Content quality is not scored.** Structurally valid but vague/false checkpoints still reset the interval.
-- **Eligible native roots still pay a fixed declaration cost.** PTC/both agents and runtime children pay no disclosure-tool schema cost because the tool is not registered in their scope.
+- **Eligible native roots pay one short standing sentence plus the fixed tool declaration.** PTC/both agents and runtime children receive neither because both are scoped to eligible roots.
 - **Hot reload does not reconstruct the current turn.** State begins again at the next observed `turn/start`.
 
 ## Install locally

@@ -16,8 +16,8 @@ Trying to make TODO state double as progress narration produces stale dashboards
 
 Codex's public prompt uses meaningful work transitions rather than “every N tools” as the normal reason to report. That is the better interaction model. However, DSH community measurements show a model can ignore even explicit TODO instructions for dozens of calls. A practical DSH plugin should therefore combine:
 
-- one compact always-available progress primitive whose description carries the semantic obligation;
-- a soft N-call reminder.
+- one compact standing instruction plus an always-available progress primitive carrying the semantic obligation;
+- a soft N-call reminder as fallback/watchdog.
 
 The numeric threshold is a safety net, not the desired cadence. v0.2 added a third stage — a hard checkpoint that denied the next tool call — and v0.3 removed it: enforcement corrects the model's style, while the actual failure is the supervisor's blindness, and a denial does not cure blindness (ADR-0001). v0.4 replaced the one-shot reminder latch with repeated reminders, but its fixed total budget still let a sufficiently long silent stretch become permanently quiet. The current policy instead bounds reminder **rate**: spacing backs off exponentially to a configured maximum interval and then stays there. This avoids fixed-frequency chatter without giving silence a terminal escape hatch (§9).
 
@@ -52,13 +52,13 @@ Current official guidance maps cleanly:
 - `ctx.tools.guard()`: final monotonic hard invariant — not used here;
 - `agent/turn-stopping`: bounded objection before close — not needed here.
 
-`dsh-disclosure-policy` uses the structured tool, Agent-scoped `session/event` / `tools/post-execute`, and one host-global `agent/created` discovery listener. It installs no standing prompt section, no guard, and no stop steering.
+`dsh-disclosure-policy` uses one short Agent-scoped standing prompt section, the structured tool, Agent-scoped `session/event` / `tools/post-execute`, and one host-global `agent/created` discovery listener. It installs no guard and no stop steering.
 
 Do not poll deprecated Session history readers for live state.
 
 ## 6. Keep optional services optional
 
-Cordis `inject` is a hard dependency. The current plugin requires `tools` and `agents`; it no longer depends on `systemPrompt`. Avoid ad-hoc “required/optional inject object” conventions unless the current framework documentation explicitly supports them.
+Cordis top-level `inject` remains limited to hard dependencies `tools` and `agents`. The eligible Agent scope uses `agent.ctx.inject(['systemPrompt'], ...)` for the standing instruction, preserving native-root scoping without making the prompt service part of the plugin's global hard dependency list.
 
 ## 7. Steering has lifecycle limits
 

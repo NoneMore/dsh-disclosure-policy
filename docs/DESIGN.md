@@ -48,8 +48,13 @@ The model-facing surface is deliberately small:
 
 ```text
 name: disclose_progress
+standing instruction:
+  Proactively call `disclose_progress` at long-task milestones—key findings,
+  phase/plan changes, verification results, blockers, or sustained work;
+  do not wait for a reminder.
+
 description:
-  Brief update after findings, phase/plan shifts, checks, blockers, or long work:
+  Proactively update after findings, plan shifts, checks, blockers, or long work:
   done, next, approach; batch with work.
 
 parameters:
@@ -58,13 +63,14 @@ parameters:
   approach: string
 ```
 
-There is no separate system-prompt section.
+The standing instruction is one scoped sentence, registered only for the same eligible native roots that receive the tool. It supplies the semantic cadence; runtime reminders remain fallback/watchdog behavior.
 
 Parameter descriptions are omitted because the field names plus the one-line tool description are sufficient. The executor rejects whitespace-only fields before resetting accounting, so empty check-ins do not buy a fresh interval without expanding the schema. Successful canonical output is `null`; the Native renderer emits no content blocks. The tool therefore does not repeat the checkpoint back into the model's next request.
 
 The ordinary reminder is likewise compact and names the tool rather than restating its schema.
 
 The test suite enforces:
+- a maximum standing-instruction length and combined fixed-context budget;
 - a maximum description length;
 - a maximum reminder/repeat length;
 - a maximum serialized fixed tool declaration size;
@@ -91,7 +97,7 @@ The plugin does not register a global progress tool. It waits for Agent identity
 
 `agent/created` is awaited after Agent setup and before queued input is released, so preset-owned presentation mode is already resolved when eligibility is sampled. The plugin also scans already-live roots on mount for hot-reload compatibility.
 
-Eligible roots own `disclose_progress`, `session/event`, and `tools/post-execute` registrations through their Agent context. Scope-filtering therefore excludes every sibling Agent automatically and disposal unwinds the complete disclosure surface. PTC/both Agents and runtime children receive no tool declaration, SDK binding, counters, or reminder listener.
+Eligible roots own the standing instruction, `disclose_progress`, `session/event`, and `tools/post-execute` registrations through their Agent context. Scope-filtering therefore excludes every sibling Agent automatically and disposal unwinds the complete disclosure surface. PTC/both Agents and runtime children receive no standing instruction, tool declaration, SDK binding, counters, or reminder listener.
 
 
 ## State

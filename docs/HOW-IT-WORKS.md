@@ -9,6 +9,7 @@ The plugin contributes:
 | Capability | DSH seam |
 |---|---|
 | root/native eligibility | global `agent/created` + `ctx.agents.roots()` + effective `run_code` visibility |
+| standing progress instruction | eligible Agent-scoped `systemPrompt.section(...)` |
 | structured progress primitive | eligible `agent.ctx.tools.register(defineTool(...))` |
 | turn lifecycle + model-step identity | eligible Agent-scoped `session/event` |
 | cadence/activity observation + reminder delivery | eligible Agent-scoped `tools/post-execute` |
@@ -122,6 +123,7 @@ Eligibility combines live runtime ownership, durable subagent lineage, and the A
 - `SessionHeader.origin === 'subagent'` or `delegationDepth > 0` excludes cold-resumed subagent sessions that no longer have a live parent owner. Generic `parentSession`/fork lineage is intentionally not enough.
 - `agent.ctx.tools.get('run_code', agent)` is absent only for exact `native` presentation. Both `ptc` and `both` expose the reserved transport and are excluded.
 - `agent/created` runs after Agent setup and before queued input is released, so preset/scoped presentation has already been composed when the plugin samples eligibility.
+- The same eligible Agent scope mounts one short standing instruction; `reminderAfterCalls: 0` suppresses only runtime reminders, not that instruction or the progress tool.
 - Registrations are made through `agent.ctx`, so the tool and listeners are Agent-local and unwind when that Agent is disposed.
 
 Eligibility is sampled at Agent creation, or when this plugin mounts over already-live roots. Mid-lifecycle presentation-mode mutation is not a supported transition for this plugin; reload or recreate the Agent after changing presentation.

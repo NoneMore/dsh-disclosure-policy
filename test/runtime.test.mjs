@@ -1,6 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  DISCLOSURE_POLICY_ORDER,
+  DISCLOSURE_POLICY_SECTION_NAME,
+  DISCLOSURE_POLICY_TEXT,
   DISCLOSURE_TOOL_DESCRIPTION,
   DISCLOSURE_TOOL_NAME,
   reminderTextFor,
@@ -20,6 +23,7 @@ function createHarness({ mode = 'native', root = true, sessionHeader = {} } = {}
   const globalListeners = new Map()
   const scopedListeners = new Map()
   const guards = []
+  const promptSections = []
   const tools = new Map()
   let currentSession = { id: 'unbound', header: sessionHeader }
   let rootEnabled = root
@@ -49,9 +53,24 @@ function createHarness({ mode = 'native', root = true, sessionHeader = {} } = {}
     },
   }
 
+  const systemPrompt = {
+    section(section) {
+      promptSections.push(section)
+      return () => {
+        const index = promptSections.indexOf(section)
+        if (index >= 0) promptSections.splice(index, 1)
+      }
+    },
+  }
+
   const agentCtx = {
     on(name, listener) {
       return addListener(scopedListeners, name, listener)
+    },
+    inject(services, callback) {
+      assert.deepEqual(services, ['systemPrompt'])
+      callback({ systemPrompt })
+      return { dispose: async () => {} }
     },
     tools: scopedTools,
   }
@@ -84,6 +103,7 @@ function createHarness({ mode = 'native', root = true, sessionHeader = {} } = {}
     ctx,
     agent,
     guards,
+    promptSections,
     tools,
     setRoot(value) {
       rootEnabled = value
@@ -169,12 +189,17 @@ async function disclose(harness, session, args, exec = {}) {
   return value
 }
 
-test('the plugin registers one compact progress tool and only two runtime listeners', { skip }, () => {
+test('the plugin registers one compact progress tool, one standing instruction, and only two runtime listeners', { skip }, () => {
   const harness = createHarness()
   host.apply(harness.ctx, { reminderAfterCalls: 8 })
 
   assert.deepEqual(harness.eventNames().sort(), ['agent/created', 'session/event', 'tools/post-execute'])
   assert.equal(harness.guards.length, 0)
+  assert.deepEqual(harness.promptSections, [{
+    name: DISCLOSURE_POLICY_SECTION_NAME,
+    order: DISCLOSURE_POLICY_ORDER,
+    text: DISCLOSURE_POLICY_TEXT,
+  }])
   assert.deepEqual([...harness.tools.keys()], [DISCLOSURE_TOOL_NAME])
 
   const tool = harness.tools.get(DISCLOSURE_TOOL_NAME)
@@ -195,6 +220,7 @@ test('the disclosure surface is installed only for exact native runtime roots', 
     const harness = createHarness({ mode })
     host.apply(harness.ctx)
     assert.deepEqual([...harness.tools.keys()], [], `${mode} root has no disclosure tool`)
+    assert.deepEqual(harness.promptSections, [], `${mode} root has no standing instruction`)
     assert.deepEqual(harness.eventNames(), ['agent/created'])
   }
 
@@ -202,6 +228,7 @@ test('the disclosure surface is installed only for exact native runtime roots', 
   host.apply(child.ctx)
   child.announce()
   assert.deepEqual([...child.tools.keys()], [], 'runtime child has no disclosure tool')
+  assert.deepEqual(child.promptSections, [], 'runtime child has no standing instruction')
   assert.deepEqual(child.eventNames(), ['agent/created'])
 
   for (const sessionHeader of [
@@ -211,6 +238,7 @@ test('the disclosure surface is installed only for exact native runtime roots', 
     const resumedSubagent = createHarness({ sessionHeader })
     host.apply(resumedSubagent.ctx)
     assert.deepEqual([...resumedSubagent.tools.keys()], [], 'persisted subagent root has no disclosure tool')
+    assert.deepEqual(resumedSubagent.promptSections, [], 'persisted subagent root has no standing instruction')
     assert.deepEqual(resumedSubagent.eventNames(), ['agent/created'])
   }
 
@@ -230,6 +258,7 @@ test('the disclosure surface is installed only for exact native runtime roots', 
   futureRoot.setRoot(true)
   futureRoot.announce()
   assert.deepEqual([...futureRoot.tools.keys()], [DISCLOSURE_TOOL_NAME])
+  assert.equal(futureRoot.promptSections[0]?.text, DISCLOSURE_POLICY_TEXT)
   assert.deepEqual(futureRoot.eventNames().sort(), ['agent/created', 'session/event', 'tools/post-execute'])
 })
 
@@ -247,6 +276,8 @@ test('the fixed model-facing declaration stays deliberately small and result tex
   }
   assert.ok(JSON.stringify(wireShape).length < 360, 'compact schema budget')
   assert.ok(DISCLOSURE_TOOL_DESCRIPTION.length < 120, 'compact description budget')
+  assert.ok(DISCLOSURE_POLICY_TEXT.length < 180, 'compact standing-instruction budget')
+  assert.ok(JSON.stringify(wireShape).length + DISCLOSURE_POLICY_TEXT.length < 540, 'combined fixed-context budget')
 
   const args = { done: 'Checked A.', next: 'Check B.', approach: 'Read B.' }
   const value = await harness.executeTool(session, DISCLOSURE_TOOL_NAME, args)
@@ -553,6 +584,7 @@ test('zero threshold disables reminders while leaving disclose_progress availabl
     assert.equal((await harness.postExecute(session)).additionalContexts, undefined)
   }
   assert.deepEqual([...harness.tools.keys()], [DISCLOSURE_TOOL_NAME])
+  assert.equal(harness.promptSections[0]?.text, DISCLOSURE_POLICY_TEXT)
 })
 test('turn end discards accounting and a new turn starts clean', { skip }, async () => {
   const harness = createHarness()

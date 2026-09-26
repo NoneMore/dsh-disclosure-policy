@@ -33,8 +33,8 @@ export declare const Config: z<Config>;
  * `dsh-disclosure-policy` host plugin.
  *
  * The plugin is intentionally native-root-only. PTC/both agents and runtime
- * child agents receive no `disclose_progress` schema, no cadence state, and no
- * post-execute reminder listener.
+ * child agents receive no standing disclosure instruction, no `disclose_progress`
+ * schema, no cadence state, and no post-execute reminder listener.
  *
  * One global `agent/created` listener discovers future eligible roots. Each
  * eligible Agent owns the actual tool and observation listeners through
