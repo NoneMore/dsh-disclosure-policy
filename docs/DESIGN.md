@@ -110,9 +110,9 @@ interface IntervalState {
   }
   activity: ActivityState
   step: number | null
+  stepTopLevelCalls: number
   remindedStep: number | null
   pendingDisclosureStep: number | null
-  disclosedStep: number | null
 }
 ```
 
@@ -121,12 +121,14 @@ Lifecycle:
 | Event/action | Effect |
 |---|---|
 | `turn/start` | create fresh interval/activity state |
-| `assistant/message` | record `data.step`; detect only a structured direct `disclose_progress` tool-call block; prose is ignored |
-| successful `disclose_progress` | reset reminder accounting; mark the whole current step as the checkpoint boundary; preserve activity |
-| ordinary completed tool | update activity; top-level call also advances cadence |
+| `assistant/message` | record `data.step`; reset the current-step top-level work counter; detect only a structured direct `disclose_progress` tool-call block; prose is ignored |
+| successful `disclose_progress` | reset reminder accounting, then seed the fresh call count with top-level ordinary siblings already completed in the current step; preserve activity |
+| ordinary completed tool | update activity; top-level call advances both the current-step work counter and cadence |
 | `turn/end` | discard turn-local state |
 
 The use of `assistant/message` is identity/accounting plus structured tool-call detection, never prose interpretation. A direct progress attempt temporarily suppresses a same-step due reminder so success cannot race a stale notice; failure leaves the cadence overdue for the next step.
+
+Same-step work is not a checkpoint exemption. `stepTopLevelCalls` records completed top-level ordinary siblings for the current Assistant step. A successful checkpoint resets the old interval and seeds the fresh interval with that count; later top-level siblings in the same step continue incrementing it. This intentionally assigns all same-step sibling work to the fresh interval, independent of settlement order. The delivery fence still prevents another reminder in that same model step.
 
 ## Cadence
 
