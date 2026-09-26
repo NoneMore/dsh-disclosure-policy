@@ -50,9 +50,11 @@ State contains:
 - disclosure cadence/budget counters;
 - the rolling activity window;
 - current Assistant `step`;
-- the step that already received a reminder.
+- the step that already received a reminder;
+- a direct progress attempt pending in the current step;
+- the step whose progress call successfully executed.
 
-`assistant/message` is observed only to copy `event.data.step`. No visible text, reasoning, or message source is parsed for disclosure.
+`assistant/message` copies `event.data.step` and checks only structured `tool-call` blocks for the exact `disclose_progress` name. No visible prose or reasoning is parsed.
 
 ## 4. What resets the interval
 
@@ -60,7 +62,7 @@ Only a successful `disclose_progress` executor resets reminder accounting.
 
 Assistant prose — including the historical four-line `Disclosure / Done / Next / Approach` shape — has no runtime effect.
 
-The progress tool is excluded from both cadence and activity accounting. This matters in PTC mode too: a nested progress SDK call resets the interval, and the enclosing top-level `run_code` later counts as the first ordinary call after that reset.
+The progress tool is excluded from both cadence and activity accounting. A successful checkpoint makes its whole Assistant step the boundary: native sibling calls and a PTC enclosing `run_code` settling later in that same step are not charged to the fresh interval. The next Assistant step starts ordinary counting.
 
 ## 5. Cadence
 
@@ -79,7 +81,7 @@ One Assistant response can dispatch many top-level calls in parallel. Call count
 
 The plugin therefore uses `assistant/message.data.step` as a delivery fence. Once one call in a model step carries a reminder, later overdue calls in that same step advance counters but do not spend another reminder slot.
 
-After the next Assistant message changes `step`, an overdue reminder can be delivered immediately.
+After the next Assistant message changes `step`, an overdue reminder can be delivered immediately. If that committed message contains a direct progress call, same-step reminder delivery is held until the attempt resolves, preventing a stale notice from racing a successful checkpoint.
 
 ## 7. Activity hint
 
