@@ -59,7 +59,7 @@ Each turn starts a disclosure interval. Completed **top-level non-disclosure** t
 
 A due reminder is attached through `tools/post-execute -> additionalContexts` and is seen on the next model step. It asks the model to call `disclose_progress` and then continue unless blocked.
 
-A successful `disclose_progress` call resets call count, cadence anchor, and reminder budget. Recent activity is preserved.
+A successful `disclose_progress` call resets call count, cadence anchor, and reminder budget. Recent activity is preserved. The entire Assistant step containing that successful checkpoint is treated as the boundary, so parallel sibling tools cannot be counted differently merely because they settle before or after the progress call.
 
 ## Activity hint
 
