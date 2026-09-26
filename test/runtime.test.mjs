@@ -77,6 +77,14 @@ function createHarness(options = {}) {
         return downstream
       })
     },
+    async stop(session, turn = 1) {
+      const steered = []
+      const agent = { session, steer(message) { steered.push(message) } }
+      for (const listener of listeners.get('agent/turn-stopping') ?? []) {
+        await listener({ agent, turn, signal: new AbortController().signal })
+      }
+      return steered
+    },
   }
 }
 
@@ -135,17 +143,64 @@ function assertNoticeShape(decision, index = 0, activityFact = null) {
   return notice
 }
 
-test('the plugin listens to exactly the two sanctioned extension points', { skip }, () => {
+test('the plugin listens to the disclosure events plus one bounded stop-boundary repair', { skip }, () => {
   const harness = createHarness()
   host.apply(harness.ctx, { reminderAfterCalls: 8 })
 
-  assert.deepEqual(harness.eventNames().sort(), ['session/event', 'tools/post-execute'])
+  assert.deepEqual(harness.eventNames().sort(), ['agent/turn-stopping', 'session/event', 'tools/post-execute'])
   assert.equal(harness.guards.length, 0, 'no ctx.tools.guard() registration')
   assert.equal(harness.sections.length, 1)
   assert.equal(harness.sections[0].name, DISCLOSURE_POLICY_SECTION_NAME)
   assert.equal(harness.sections[0].order, DISCLOSURE_POLICY_ORDER)
   assert.equal(harness.sections[0].text, DISCLOSURE_POLICY_TEXT)
   assert.equal(harness.disposers.length, 1, 'the prompt section is owned by the plugin fiber')
+})
+
+test('a reminder-triggered standalone disclosure gets exactly one continuation step', { skip }, async () => {
+  const harness = createHarness()
+  const session = { id: 'session-standalone-disclosure' }
+  host.apply(harness.ctx, { reminderAfterCalls: 1, maxReminders: 1, activityWindowSize: 0 })
+  harness.emit(session, TURN.start(1))
+
+  assertNoticeShape(await harness.postExecute(session), 0)
+  harness.emit(session, modelMessage([{
+    type: 'text',
+    text: 'Disclosure:\nDone: Confirmed the current finding.\nNext: Inspect the remaining file.\nApproach: Read it and compare the call path.',
+  }]))
+
+  const steered = await harness.stop(session)
+  assert.equal(steered.length, 1)
+  assert.equal(steered[0].role, 'user')
+  assert.equal(steered[0].source.kind, 'disclosure-policy')
+  assert.match(steered[0].content[0].text, /progress checkpoint, not a terminal response/)
+  assert.match(steered[0].content[0].text, /Continue the stated next action now/)
+  assert.equal((await harness.stop(session)).length, 0, 'the repair is bounded to one continuation per turn')
+})
+
+test('stop-boundary repair ignores ordinary disclosure and disclosure that already continues with tools', { skip }, async () => {
+  const noReminder = createHarness()
+  const firstSession = { id: 'session-no-reminder' }
+  host.apply(noReminder.ctx, { reminderAfterCalls: 8 })
+  noReminder.emit(firstSession, TURN.start(1))
+  noReminder.emit(firstSession, modelMessage([{
+    type: 'text',
+    text: 'Disclosure:\nDone: Checked the state.\nNext: Inspect another file.\nApproach: Read it directly.',
+  }]))
+  assert.equal((await noReminder.stop(firstSession)).length, 0)
+
+  const withTool = createHarness()
+  const secondSession = { id: 'session-disclosure-with-tool' }
+  host.apply(withTool.ctx, { reminderAfterCalls: 1, maxReminders: 1, activityWindowSize: 0 })
+  withTool.emit(secondSession, TURN.start(1))
+  assertNoticeShape(await withTool.postExecute(secondSession), 0)
+  withTool.emit(secondSession, modelMessage([
+    {
+      type: 'text',
+      text: 'Disclosure:\nDone: Checked the state.\nNext: Inspect another file.\nApproach: Read it directly.',
+    },
+    { type: 'tool-call', name: 'read' },
+  ]))
+  assert.equal((await withTool.stop(secondSession)).length, 0)
 })
 
 test('the configured cadence yields a repeat reminder per period up to the budget', { skip }, async () => {
@@ -516,7 +571,7 @@ test('an absent systemPrompt service is tolerated', { skip }, async () => {
   host.apply(harness.ctx, { reminderAfterCalls: 2, maxReminders: 3 })
   harness.emit(session, TURN.start(1))
 
-  assert.deepEqual(harness.eventNames().sort(), ['session/event', 'tools/post-execute'])
+  assert.deepEqual(harness.eventNames().sort(), ['agent/turn-stopping', 'session/event', 'tools/post-execute'])
   await harness.postExecute(session)
   assertNoticeShape(await harness.postExecute(session))
 })
