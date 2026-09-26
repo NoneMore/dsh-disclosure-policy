@@ -50,9 +50,9 @@ State contains:
 - disclosure cadence/budget counters;
 - the rolling activity window;
 - current Assistant `step`;
+- completed top-level ordinary calls observed in the current step;
 - the step that already received a reminder;
-- a direct progress attempt pending in the current step;
-- the step whose progress call successfully executed.
+- a direct progress attempt pending in the current step.
 
 `assistant/message` copies `event.data.step` and checks only structured `tool-call` blocks for the exact `disclose_progress` name. No visible prose or reasoning is parsed.
 
@@ -62,7 +62,7 @@ Only a successful `disclose_progress` executor resets reminder accounting.
 
 Assistant prose — including the historical four-line `Disclosure / Done / Next / Approach` shape — has no runtime effect.
 
-The progress tool is excluded from both cadence and activity accounting. A successful checkpoint makes its whole Assistant step the boundary: native sibling calls and a PTC enclosing `run_code` settling later in that same step are not charged to the fresh interval. The next Assistant step starts ordinary counting.
+The progress tool itself is excluded from both cadence and activity accounting. Ordinary top-level siblings are not excluded: the adapter counts them throughout the Assistant step. When a checkpoint succeeds, any top-level siblings that already settled in that step are carried across the reset into the fresh interval, and siblings settling later keep advancing the same fresh counter. This is deliberately conservative and settlement-order-independent; a checkpoint batched with work cannot make that work disappear from cadence. Reminder delivery remains suppressed for the rest of the checkpoint step and may surface on a later step if the fresh interval is already overdue.
 
 ## 5. Cadence
 

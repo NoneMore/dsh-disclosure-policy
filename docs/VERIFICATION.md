@@ -1,6 +1,18 @@
 # Verification record
 
-## Structured progress tool: current checkout (2026-09-26)
+## Checkpoint-step accounting: current checkout (2026-09-26)
+
+Verified PR #4 / `fix/count-checkpoint-step-work`, with package version still `0.4.1` (unreleased changes).
+
+- GitHub Actions CI run **#67** passed on Node **22.19.0** and **24**.
+- On both jobs: `npm run typecheck`, `npm run build`, `npm test`, committed-`lib/` verification, and package-content verification passed.
+- Final test result: **34 passed, 0 failed, 0 skipped**.
+- The new regression covers top-level siblings settling both before and after a successful checkpoint in one Assistant step; all are carried into the fresh interval while reminder delivery remains fenced to a later model step.
+- The nested/PTC regression verifies that the enclosing `run_code` now advances the fresh interval when it settles after a nested checkpoint.
+- Existing coverage still includes failed and whitespace-only checkpoints, one-reminder-per-model-step fencing, activity preservation, downstream failure/block composition, turn lifecycle, and absence of guards / turn-stop steering.
+- This CI validates host/runtime behavior, committed build output, and package shape; it does **not** add real routed-model evidence.
+
+## Structured progress tool: prior checkpoint (2026-09-26)
 
 Verified the ADR-0007 refactor on PR #3 / `fix/continue-after-disclosure`, with package version still `0.4.1` (unreleased changes).
 
