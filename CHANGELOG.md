@@ -2,6 +2,8 @@
 
 ## Unreleased
 
+- Reset reminder accounting only on a complete model-authored four-line disclosure: `Disclosure / Done / Next / Approach` or `披露 / 已做 / 将做 / 做法`. Ordinary prose, malformed structures, mixed labels, quotations, and fenced or embedded examples do not reset calls, budget, or activity. Repeated or uninformative complete structures still qualify; recognition does not judge semantics.
+- Update the static policy and bounded reminders to ask for recent work and its result or uncertainty, the next action, and the intended operations or verification. Preserve the default 8-call cadence and 3-notice budget, with no deduplication, immediate malformed-format correction, tool denial, or forced continuation. See ADR-0005.
 - Add coarse activity-shape accounting alongside silence accounting. Nested native calls contribute activity even though they still do not advance the top-level silence cadence.
 - When a normal disclosure reminder is due after an inspection-only stretch, append an objective fact about the observed tool mix and ask which unresolved fact would justify further investigation. The hint does not add a new reminder cadence, parse shell commands, deny tools, or judge productivity.
 

@@ -2,7 +2,7 @@
  * Pure disclosure policy.
  *
  * This module deliberately imports nothing from the host so the complete
- * behavior — silence accounting, reminder cadence, budget, and post-execute
+ * behavior — disclosure accounting, reminder cadence, budget, and post-execute
  * composition — can be unit-tested without the DeepSeek Harness dependency
  * graph. `index.ts` is only the adapter that binds these decisions to Cordis
  * extension points.
@@ -28,9 +28,9 @@ export interface DisclosureConfig {
    */
   reminderAfterCalls: number
   /**
-   * Reminder budget for one silence interval: at most this many notices, one
+   * Reminder budget for one disclosure interval: at most this many notices, one
    * every `reminderAfterCalls` completed top-level calls, after which the
-   * interval stays silent until visible model text opens a new one. `1` is the
+   * interval gets no more reminders until structured disclosure opens a new one. `1` is the
    * historical one-shot cadence; `0` disables runtime reminders.
    */
   maxReminders: number
@@ -62,12 +62,12 @@ const VERIFY_TOKENS = new Set([
   'acceptance', 'benchmark', 'build', 'check', 'lint', 'pytest', 'test', 'typecheck', 'validate', 'validation', 'verify',
 ])
 
-/** Coarse activity counters for one visible-text interval. */
+/** Coarse activity counters for one disclosure interval. */
 export function createActivity(): ActivityState {
   return { ...OPEN_ACTIVITY }
 }
 
-/** Visible model text opens a new activity interval alongside the silence interval. */
+/** Recognized disclosure opens a new activity interval alongside the reminder interval. */
 export function resetActivity(state: ActivityState): ActivityState {
   Object.assign(state, OPEN_ACTIVITY)
   return state
@@ -141,13 +141,16 @@ export interface MessageLike {
   readonly content: readonly ContentBlockLike[]
 }
 
+const DISCLOSURE_LABEL_SETS = [
+  ['Disclosure', 'Done', 'Next', 'Approach'],
+  ['披露', '已做', '将做', '做法'],
+] as const
+
 /**
  * True when any visible `text` block carries a non-whitespace character.
  *
- * Reasoning blocks are not disclosure, and an empty or whitespace-only text
- * block is not a message the supervisor can read. Because this predicate is the
- * whole quality rule, a one-word acknowledgement resets the interval exactly
- * like a real disclosure; the runtime does not score semantics.
+ * Reasoning blocks and whitespace-only text are not visible speech. Visibility
+ * alone does not establish disclosure; see isModelDisclosure().
  */
 export function hasVisibleText(content: readonly ContentBlockLike[]): boolean {
   return content.some(block => block.type === 'text'
@@ -156,22 +159,38 @@ export function hasVisibleText(content: readonly ContentBlockLike[]): boolean {
 }
 
 /**
- * True when one committed message opens a new silence interval: assistant text
- * authored by the routed model. Reasoning-only messages, tool results, and
- * plugin-authored context never reset the interval.
+ * True when committed model-authored visible text has the agreed disclosure
+ * structure. Recognition verifies expression only, never content quality.
  */
 export function isModelDisclosure(message: MessageLike): boolean {
   if (message.role !== 'assistant') return false
   if (message.source?.kind !== 'model') return false
-  return hasVisibleText(message.content)
+  const text = message.content
+    .filter(block => block.type === 'text' && typeof block.text === 'string')
+    .map(block => block.text)
+    .join('')
+  const rawLines = text.split(/\r\n|\n|\r/)
+  const first = rawLines.findIndex(line => line.trim() !== '')
+  if (first === -1) return false
+  const last = rawLines.findLastIndex(line => line.trim() !== '')
+  const lines = rawLines.slice(first, last + 1)
+  if (lines.length !== 4) return false
+  // Preserve indentation until an entire Markdown code block is excluded.
+  if (lines.every(line => /^(?: {4}| {0,3}\t)/.test(line))) return false
+  return DISCLOSURE_LABEL_SETS.some(labels => lines.every((line, index) => {
+    const field = /^([^:：]+)[:：](.*)$/.exec(line.trim())
+    if (field === null || field[1].trim() !== labels[index]) return false
+    return index === 0 ? field[2].trim() === '' : field[2].trim() !== ''
+  }))
 }
 
 /**
- * One turn-local silence interval: a run of completed top-level tool calls with
- * no visible model text since it opened.
+ * One turn-local disclosure interval: completed top-level tool calls since the
+ * last recognized structured disclosure. The exported name is retained for
+ * compatibility with existing policy callers.
  *
  * The reminder budget belongs to this interval, so the interval — not the
- * individual reminder — is the unit that resets with visible model text.
+ * individual reminder — is the unit that resets with structured disclosure.
  */
 export interface SilenceState {
   /** Completed top-level tool calls since the interval opened. Never reset by a reminder. */
@@ -191,7 +210,7 @@ export function createSilence(): SilenceState {
 }
 
 /**
- * Open a new interval in place: visible model text (or a new turn) clears the
+ * Open a new interval in place: recognized disclosure (or a new turn) clears the
  * call count, the first-reminder anchor, and the delivered count, without
  * replacing the record.
  */
@@ -278,6 +297,17 @@ export function withReminder<TNotice, TDecision extends ReminderCarrier<TNotice>
   return { ...decision, additionalContexts } as TDecision
 }
 
+const DISCLOSURE_FORMAT_GUIDANCE = [
+  'Use exactly four visible lines with one complete label set:',
+  'Disclosure:',
+  'Done: <recent work and its result or remaining uncertainty>',
+  'Next: <immediate intended action>',
+  'Approach: <concrete operations or verification>',
+  'Or use the corresponding Chinese labels: 披露： / 已做： / 将做： / 做法：.',
+  'Keep each field concise and non-empty. Use : or ：, without code fences, quotes, surrounding prose, or mixed label sets.',
+  'No new conclusion is required. If execution has not started, say so; if unable to proceed, state the dependency and the conditional follow-up.',
+].join('\n')
+
 /**
  * The standing policy installed at {@link DISCLOSURE_POLICY_ORDER}.
  *
@@ -297,11 +327,8 @@ export const DISCLOSURE_POLICY_TEXT = [
   '- encountering a blocker or material uncertainty; or',
   '- preparing to enter a clearly long stretch of work.',
   '',
-  'A useful disclosure answers only what is relevant:',
-  '',
-  '1. What is now confirmed?',
-  '2. Did this change the settled plan or the settled constraints?',
-  '3. What happens next, and is there anything worth the supervisor’s intervention?',
+  DISCLOSURE_FORMAT_GUIDANCE,
+  'Include any settled-plan or constraint change and anything worth the supervisor’s intervention in the relevant field.',
   '',
   'You do not need an opening preamble. Ask the user a question only when the execution brief does not let you continue; otherwise keep working and disclose. Never expose private chain-of-thought.',
 ].join('\n')
@@ -310,21 +337,22 @@ export const DISCLOSURE_POLICY_TEXT = [
  * The one soft reminder, delivered as next-step context through
  * `tools/post-execute`.
  *
- * It asks for the same three answers as the standing policy in one or two
- * sentences. The base text is purely instructional; a caller may compose one
+ * It asks for the same short structure as the standing policy. The base text
+ * is purely instructional; a caller may compose one
  * objective activity fact beside it. Neither path threatens denial, requests
  * user input, or asks for chain-of-thought.
  */
 export const DISCLOSURE_REMINDER_TEXT = [
-  '[disclosure] Before continuing this long stretch of tool work, send one or two concise sentences of visible disclosure: what is now confirmed, whether the settled plan or constraints changed, and what happens next — including anything worth the supervisor’s intervention.',
-  'Then keep working autonomously; do not wait for a reply.',
-].join(' ')
+  '[disclosure] Before continuing this stretch of tool work, send a concise structured disclosure of recent work, the next action, and the approach, including anything worth the supervisor’s intervention.',
+  DISCLOSURE_FORMAT_GUIDANCE,
+  'Then keep working autonomously whenever the execution brief lets you continue; do not wait for a reply unless you cannot proceed.',
+].join('\n')
 
 /**
  * The one sentence that distinguishes a later reminder in the same interval.
  *
  * It states the bounded runtime fact the plugin actually observed — this
- * interval is a repeat reminder and still carries no visible model text. That is
+ * interval is a repeat reminder and still carries no structured disclosure. That is
  * verifiable and is information the model does not reliably have about itself,
  * which is what a repeat buys. "Repeat" labels the message, not the model's
  * conduct, so it stays true without accusing anyone.
@@ -333,7 +361,7 @@ export const DISCLOSURE_REMINDER_TEXT = [
  * model how many notices remain would let it wait the cadence out and turn the
  * disclosure policy into a game.
  */
-export const DISCLOSURE_REPEAT_TEXT = 'This is a repeat reminder: no visible disclosure has been sent in this stretch.'
+export const DISCLOSURE_REPEAT_TEXT = 'This is a repeat reminder: no complete structured disclosure has been observed in this stretch.'
 
 /**
  * The reminder text for one budget slot: the first reminder in an interval is

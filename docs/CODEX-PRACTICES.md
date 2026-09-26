@@ -135,7 +135,7 @@ Also bad:
 Here is my full internal reasoning for why I chose this implementation...
 ```
 
-The current plugin therefore resets its communication freshness budget only on visible Assistant `text`, never on reasoning blocks.
+The current plugin recognizes its agreed four-line structure only in visible model-authored Assistant `text`, never in reasoning blocks (ADR-0005). The structure requirement is local policy, not a Codex requirement.
 
 ---
 
@@ -649,3 +649,9 @@ communicate before disappearing into substantial work
 ```
 
 DSH already has the transcript mechanics required for the first two points. The plugin's job is mainly to add the missing **communication obligation and bounded enforcement**, while leaving plan state, user decisions, private reasoning, and final delivery as separate concepts.
+
+## 18. Official documentation refresh for the disclosure design (2026-09-26)
+
+The fetched [Codex Prompting Guide](https://developers.openai.com/cookbook/examples/gpt-5/codex_prompting_guide), sections "Mid-Rollout User Updates" and "Preambles & Personality", describes concise updates about outcomes or impact so far, immediate next steps, and open questions or learning when relevant. Its GPT-5.3-Codex guidance usually targets one or two sentences and discourages status headings and a tool-log voice. The guide describes changes across model generations, so its example cadence is not a universal product guarantee.
+
+**Local adaptation:** the user has selected separate past-work, next-action, and method fields for this plugin's deterministic recognition contract. They are not an official Codex three-field format. The model-facing past-work field includes results or remaining uncertainty; a method field summarizes intended external actions without requesting private reasoning. [ADR-0005](adr/0005-structural-disclosure-recognition.md) records the accepted design and its responsibility boundary.

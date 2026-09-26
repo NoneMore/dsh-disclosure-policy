@@ -18,7 +18,7 @@ export interface Config {
      */
     reminderAfterCalls?: number;
     /**
-     * Reminder budget for one silence interval: at most this many notices, one
+     * Reminder budget for one disclosure interval: at most this many notices, one
      * every `reminderAfterCalls` completed top-level calls. `1` is the historical
      * one-shot cadence; `0` disables runtime reminders. Default 3.
      */
@@ -30,7 +30,7 @@ export declare const Config: z<Config>;
  *
  * Two extension points only:
  *
- * - `session/event` maintains one turn-local silence interval per session from
+ * - `session/event` maintains one turn-local disclosure interval per session from
  *   first-party durable facts;
  * - `tools/post-execute` counts settled top-level calls and appends the due
  *   soft reminder as next-step context, at most `maxReminders` per interval.

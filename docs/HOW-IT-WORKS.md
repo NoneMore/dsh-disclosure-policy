@@ -1,6 +1,6 @@
 # How `dsh-disclosure-policy` works
 
-Implementation walkthrough for **v0.4.0**, checked against the installed Harness tree.
+Implementation walkthrough for the **current checkout**, updated 2026-09-26 for ADR-0005. Installed-tree citations below retain their historical 2026-09-16 audit snapshot; current behavior is checked against source and tests.
 
 - `DSHROOT` = `E:\Apps\nvm\v24.19.0\node_modules\@deepseek-ai\dsh\node_modules\@deepseek-ai\`
 - Verified package versions: `dsh-*` `0.1.5-rc.2`, `cordis` `4.0.2`, `schemastery` `3.18.2`.
@@ -19,8 +19,8 @@ The plugin contributes three things:
 | Contribution | Where |
 |---|---|
 | A static disclosure policy in the system prompt, order `10150` | `systemPrompt.section()` via `ctx.effect()` |
-| One turn-local silence projection per session | `session/event` listener |
-| At most `maxReminders` soft reminders per silence interval, one per cadence period | `tools/post-execute` → `additionalContexts` |
+| One turn-local disclosure projection per session | `session/event` listener |
+| At most `maxReminders` soft reminders per disclosure interval, one per cadence period | `tools/post-execute` → `additionalContexts` |
 
 Everything decidable lives in `src/policy.ts`, which imports nothing from the host. `src/index.ts` is a thin adapter — about 60 lines of code plus comments — over those decisions. `lib/` is the compiled output of `src/` and is what the tests exercise.
 
@@ -109,6 +109,8 @@ DSH copies a patch's remaining top-level fields — including `config` — onto 
 
 ## 4. State model
 
+The exported state/helper names retain their historical `Silence` spelling for API compatibility; the state now measures a disclosure interval.
+
 ```ts
 interface SilenceState {
   calls: number                    // completed top-level calls since it opened
@@ -130,9 +132,9 @@ Lifecycle:
 
 | Event | Effect |
 |---|---|
-| `turn/start` | creates fresh silence and activity projections |
-| `assistant/message` with visible model text | resets both projections |
-| every `tools/post-execute` | classifies `exec.name` into activity; top-level calls also advance silence cadence |
+| `turn/start` | creates fresh disclosure and activity projections |
+| `assistant/message` with recognized structured model disclosure | resets both projections |
+| every `tools/post-execute` | classifies `exec.name` into activity; top-level calls also advance disclosure cadence |
 | `turn/end` | discards the interval |
 
 `turn/start` is the **only** initialization point. Nothing scans session history, which is what current DSH policy requires for new production code (`docs/SOURCES.md` section A). The cost is explicit: a hot reload mid-turn does not reconstruct the current interval, so accounting starts at the next `turn/start`.
@@ -161,11 +163,11 @@ Payload is `{ turn, step, message, stream, usage?, interrupted? }` (`:309-317`);
 
 1. `role === 'assistant'` — tool results and injected context are user-role;
 2. `source.kind === 'model'` — plugin-authored context is never disclosure;
-3. `hasVisibleText(content)` — some `text` block has a non-whitespace character.
+3. Its entire visible text matches the agreed four-line structure, with all three content fields non-empty and in order.
 
-Condition 3 is what makes the reset rule mechanical: DSH models visible `text` and `reasoning` as distinct block types (`docs/SOURCES.md` section A), so a reasoning-only message never resets the interval, and an empty or whitespace-only text block is not something a supervisor can read.
+Condition 3 is a local expression contract (ADR-0005): concatenate visible text blocks in order, exclude reasoning and tool-call blocks, and trim surrounding whitespace. Accept `Disclosure / Done / Next / Approach` or `披露 / 已做 / 将做 / 做法`, using `:` or `：` separators. An empty heading body and three non-empty fields are required. Mixed labels, missing fields, fenced or indented code blocks, quotations, embedded examples, and extra prose fail recognition. Repeated complete structures still reset; the runtime does not review semantics.
 
-There is **no** commentary/final discriminator anywhere in the installed build, so the plugin makes no phase claim: any non-empty visible model text counts (`docs/SOURCES.md` section H).
+There is **no** commentary/final discriminator anywhere in the installed build, so the plugin makes no phase claim: only complete structured model disclosure counts (`docs/SOURCES.md` section H).
 
 The message is committed before the tool calls it requested are dispatched, which is why visible text and a tool call in one model response compose cleanly (`docs/SOURCES.md` section G).
 
@@ -197,9 +199,9 @@ return withReminder(downstream, notice(reminderTextFor(index)))  // 3. compose, 
 
 `postExecute()` runs for every dispatch outcome, and the pipeline routes a pre-execute denial back through it: a pre-policy denial materializes `{ kind: 'post-result', exec, result }` (`DSHROOT/dsh-tools/lib/index.js:3127-3139`), which `finalizeScheduledExecution()` then passes to `postExecute()` (`:3241-3243`). So the count is independent of success, failure, or another policy's denial — exactly as specified — without the plugin inspecting the result at all. If a downstream post-execute listener throws, the plugin advances the count before rethrowing but does **not** call `markReminderDelivered`, so the throwing boundary cannot consume a budget slot; the anchor stays unset and the reminder is delivered at the next boundary that can carry `additionalContexts`.
 
-### Nested calls do not count for silence, but they do count for activity
+### Nested calls do not count for cadence, but they do count for activity
 
-`ToolExecutionInput.parent` is the opaque token of the enclosing transport execution; PTC mode sets it on SDK sub-dispatches (`DSHROOT/dsh-tools/lib/types/index.d.ts:209-218`). `countCompletedCall(..., { nested: exec.parent !== undefined })` returns immediately for those, so a `run_code` program that dispatches fifty native calls advances the silence interval once, for its own top-level call. The activity projection still classifies each completed nested tool by its structured `exec.name`, so composite transports cannot hide a large inspection/search stretch from the factual reminder context.
+`ToolExecutionInput.parent` is the opaque token of the enclosing transport execution; PTC mode sets it on SDK sub-dispatches (`DSHROOT/dsh-tools/lib/types/index.d.ts:209-218`). `countCompletedCall(..., { nested: exec.parent !== undefined })` returns immediately for those, so a `run_code` program that dispatches fifty native calls advances the disclosure interval once, for its own top-level call. The activity projection still classifies each completed nested tool by its structured `exec.name`, so composite transports cannot hide a large inspection/search stretch from the factual reminder context.
 
 ### At most one reminder per cadence period, up to the interval budget
 
@@ -220,7 +222,7 @@ if (state.calls < dueAt) return null
 return index
 ```
 
-The first reminder anchors the cadence at the threshold call, and each later one is due `reminderAfterCalls` calls after that anchor, which is why a parallel step crosses at most one period and yields at most one notice. Because the anchor is set by `markReminderDelivered` rather than by counting alone, a boundary that cannot deliver leaves the anchor unset and the cadence starts at the next boundary that can. The counter is never reset by a reminder, so it keeps measuring the interval until visible model text opens a new one.
+The first reminder anchors the cadence at the threshold call, and each later one is due `reminderAfterCalls` calls after that anchor, which is why a parallel step crosses at most one period and yields at most one notice. Because the anchor is set by `markReminderDelivered` rather than by counting alone, a boundary that cannot deliver leaves the anchor unset and the cadence starts at the next boundary that can. The counter is never reset by a reminder, so it keeps measuring the interval until recognized structured model disclosure opens a new one.
 
 The returned index selects the base/repeat text. Before composition, `inspectionActivityFact()` may add one objective suffix when the interval contains at least `reminderAfterCalls` inspection/search operations and no mutation- or verification-oriented operation. The suffix reports the observed mix and asks which unresolved fact would justify more investigation; it does not create a new reminder or label the work as excessive. Index `0` still uses the base request, and any later index also appends `DISCLOSURE_REPEAT_TEXT` (ADR-0004).
 
@@ -244,13 +246,13 @@ The registry merges the tool body's deferred contexts first and the decision's c
 ```ts
 createUserMessage({
   content: [{ type: 'text', text: reminderTextFor(index) }],
-  source: { kind: 'plugin', plugin: 'disclosure-policy', form: 'notice', summary: 'Disclosure reminder' },
+  source: { kind: 'disclosure-policy', form: 'notice', summary: 'Disclosure reminder' },
 })
 ```
 
 `createUserMessage` requires both `content` and `source` (`DSHROOT/dsh-llm/lib/types/message.d.ts:180-183`); `form: 'notice'` requires a `summary` bounded to `CONTEXT_SUMMARY_MAX_CHARS = 120` (`:81-85`, `:110`). The summary is a static two-word label, not a runtime fact.
 
-The text is built from two constants: the request, which asks for one or two sentences covering the three disclosure questions and then says to keep working, and — for repeat reminders only — one fixed sentence stating that this is a repeat reminder and that no visible disclosure has been sent in this stretch. Both avoid a counter, a threshold, a denial threat, a question, a reasoning request, and any statement of the remaining budget; the pure tests assert exactly that.
+The request includes the concise four-line expression contract for recent work, next action, and approach. A repeat adds one fixed sentence stating that no complete structured disclosure has been observed in this stretch; ordinary visible prose may have occurred. Both avoid a counter, a threshold, a denial threat, a question, a reasoning request, and any statement of the remaining budget; the pure tests assert exactly that.
 
 ---
 
@@ -260,7 +262,7 @@ The text is built from two constants: the request, which asks for one or two sen
 
 The section text is a constant. It carries no counters and no timestamps, which is deliberate: the assembled prompt is a `system`-role entry inside `messages`, and a route that reads the latest `system` message appends a full copy whenever the rendering changes, while every other route rewrites node 0 in place. Volatile prompt text invalidates the cached prefix from an early token either way; `.scratch/research/prompt-cache-and-volatile-text.md` traces the mechanism. Per-turn state therefore lives only in appended context.
 
-The section states the semantic obligation in full: the six material moments, the three questions, no opening-preamble requirement, the question-only-when-blocked rule, and the chain-of-thought prohibition.
+The section states the semantic obligation in full: the six material moments, the three content fields and expression format, no opening-preamble requirement, the question-only-when-blocked rule, and the chain-of-thought prohibition.
 
 ---
 
@@ -280,11 +282,11 @@ model calls grep, glob, read, search, fetch, read, grep   (7 more top-level call
   -> that call's post-execute decision gains one plugin notice (index 0)
   -> the notice enters the next-step inbox
 
-model keeps calling tools without visible text  (8 more calls)
+model sends ordinary prose and keeps calling tools  (8 more calls)
   -> calls = 16 -> second notice (index 1, repeat sentence appended)
 
-model's next step sees the notice and emits visible text plus a tool call
-  -> assistant/message with visible text -> resets silence and activity
+model's next step sees the notice and emits a complete structured disclosure plus a tool call
+  -> assistant/message with visible text -> resets disclosure accounting and activity
   -> its tool call settles -> calls = 1 and starts the new activity mix
 
 turn/end
@@ -293,7 +295,7 @@ turn/end
 
 Parallel variant: if six calls settle from one step and the interval crosses a cadence period inside that batch, exactly one of them carries that period's notice and the rest return untouched.
 
-Budget variant: after `delivered` reaches `maxReminders` the interval stays silent for every later call, however many settle, until visible model text opens a new one.
+Budget variant: after `delivered` reaches `maxReminders` the interval stays silent for every later call, however many settle, until recognized structured model disclosure opens a new one.
 
 Denied variant: a call denied by another policy still returns through `post-execute`, so it advances the interval and can carry the notice like any other call.
 
@@ -314,12 +316,12 @@ Denied variant: a call denied by another policy still returns through `post-exec
 ## 10. Known gaps and code-vs-prose notes
 
 - **Hot reload loses the current interval.** By design: no history scan. The first reminder after a reload can be delayed to the next turn.
-- **The threshold is a failsafe, not a semantic trigger.** Nothing in DSH exposes "a phase completed" or "a test now passes", so `reminderAfterCalls` measures silence, not meaning. The standing policy carries the meaning.
+- **The threshold is a failsafe, not a semantic trigger.** Nothing in DSH exposes "a phase completed" or "a test now passes", so `reminderAfterCalls` measures calls since recognized disclosure, not task progress. The standing policy carries the meaning.
 - **Activity shape is deliberately shallow.** It classifies structured tool names, not arbitrary shell command text, and says nothing about whether an operation was useful, whether a mutation actually changed files, or whether a verification proved the task correct.
 - **A reminder can be ignored.** Disclosure is best-effort; the plugin has no way to compel it and does not try (ADR-0003). ADR-0004 raises the cost of staying silent with a bounded repeat cadence, but an interval that spends its whole budget is still silent for the rest of that turn.
-- **Visible text is the only reset, and it is not scored.** A one-word acknowledgement opens a new interval exactly like a real disclosure, so the cadence raises the cost of silence but not of evasion; the plugin does not judge prose quality (ADR-0003, ADR-0004).
+- **Complete structure is the reset, and content is not scored.** Ordinary prose cannot open a new interval. Vague, repeated, or false complete structures still can; the plugin checks expression rather than prose quality (ADR-0005).
 - **The interval does not survive `turn/end`.** A model that keeps opening fresh turns is not covered by the cadence (ADR-0004).
-- **No commentary phase exists in this build.** The plugin never claims that a given assistant message is interim or final; it only observes that visible text exists.
+- **No commentary phase exists in this build.** The plugin never claims that a given assistant message is interim or final; it recognizes structure in model-authored visible text.
 - **The real-profile check covered boot, not a model turn.** An isolated Web profile loaded the packed plugin and listened successfully, but no live model turn was driven through the reminder threshold; see `docs/VERIFICATION.md`.
 
 ---
@@ -356,7 +358,7 @@ Denied variant: a call denied by another policy still returns through `post-exec
 npm install --cache ./.npm-cache     # local cache because the default npm cache is outside the sandbox
 npm run typecheck
 npm run build
-npm test                             # 25 tests
+npm test                             # current results: docs/VERIFICATION.md
 node --check lib/index.js
 node --check lib/policy.js
 ```

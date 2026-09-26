@@ -1,6 +1,6 @@
 # Keep disclosure model-authored and best-effort
 
-Status: accepted (2026-09-16), partly superseded by [ADR-0004](0004-bounded-repeat-reminders.md) (2026-09-17)
+Status: accepted (2026-09-16), partly superseded by [ADR-0004](0004-bounded-repeat-reminders.md) (2026-09-17) and [ADR-0005](0005-structural-disclosure-recognition.md) (2026-09-26; structured reset and disclosure content)
 
 The plugin asks the model to disclose enough information for a supervisor to choose whether to intervene, but it does not generate disclosure from runtime facts or guarantee that disclosure occurs. A static policy states the semantic obligation and a single soft reminder may reinforce it; neither tool denial nor forced continuation is used. This deliberately accepts that an uncooperative model may remain silent in exchange for a substantially smaller, more auditable policy surface.
 

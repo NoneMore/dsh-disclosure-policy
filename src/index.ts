@@ -48,7 +48,7 @@ export interface Config {
    */
   reminderAfterCalls?: number
   /**
-   * Reminder budget for one silence interval: at most this many notices, one
+   * Reminder budget for one disclosure interval: at most this many notices, one
    * every `reminderAfterCalls` completed top-level calls. `1` is the historical
    * one-shot cadence; `0` disables runtime reminders. Default 3.
    */
@@ -83,7 +83,7 @@ function notice(text: string): UserMessage {
  *
  * Two extension points only:
  *
- * - `session/event` maintains one turn-local silence interval per session from
+ * - `session/event` maintains one turn-local disclosure interval per session from
  *   first-party durable facts;
  * - `tools/post-execute` counts settled top-level calls and appends the due
  *   soft reminder as next-step context, at most `maxReminders` per interval.
@@ -109,8 +109,8 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
       case 'assistant/message': {
         const interval = intervals.get(session)
         if (interval === undefined) return
-        // Model-authored visible text opens a new interval. Reasoning blocks
-        // and plugin-authored messages are not disclosure and never reset it.
+        // Only complete structured model disclosure opens a new interval.
+        // Ordinary prose, reasoning, and plugin context never reset it.
         if (isModelDisclosure(event.data.message)) {
           resetSilence(interval.silence)
           resetActivity(interval.activity)
@@ -142,7 +142,7 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
     const observe = (): number | null => {
       if (interval === undefined) return null
       // Activity describes completed tool operations, including nested native
-      // dispatches. Silence cadence still counts top-level calls only.
+      // dispatches. Disclosure cadence still counts top-level calls only.
       recordActivity(interval.activity, classifyToolActivity(exec.name))
       return countCompletedCall(interval.silence, config.reminderAfterCalls, config.maxReminders, {
         nested: exec.parent !== undefined,

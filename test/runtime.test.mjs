@@ -168,7 +168,7 @@ test('the configured cadence yields a repeat reminder per period up to the budge
   assert.deepEqual(carriers, [8, 16, 24], 'three notices, one per cadence period')
 })
 
-test('visible model text re-arms the interval while reasoning and plugin messages do not', { skip }, async () => {
+test('structured model disclosure re-arms the interval while reasoning and plugin messages do not', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'session-2' }
   host.apply(harness.ctx, { reminderAfterCalls: 3, maxReminders: 2 })
@@ -192,10 +192,50 @@ test('visible model text re-arms the interval while reasoning and plugin message
     assert.equal(decision.additionalContexts, undefined, `budget spent, still one interval, call ${call}`)
   }
 
-  harness.emit(session, modelMessage([{ type: 'text', text: 'Root cause confirmed.' }]))
+  harness.emit(session, modelMessage([{ type: 'text', text: 'Disclosure:\nDone: Confirmed the filter gap.\nNext: Fix the entry.\nApproach: Run a proceed regression.' }]))
   await harness.postExecute(session)
   await harness.postExecute(session)
   assertNoticeShape(await harness.postExecute(session), 0)
+})
+
+test('only complete disclosure resets cadence, budget, and activity, including repeated disclosure', { skip }, async () => {
+  const harness = createHarness()
+  const session = { id: 'session-structured-disclosure' }
+  host.apply(harness.ctx, { reminderAfterCalls: 3, maxReminders: 2 })
+  harness.emit(session, TURN.start(1))
+
+  const read = () => harness.postExecute(session, { kind: 'accept' }, { name: 'read' })
+  await harness.postExecute(session, { kind: 'accept' }, { name: 'edit' })
+  harness.emit(session, modelMessage([{ type: 'text', text: 'Now the replay check in choose_nested:' }]))
+  harness.emit(session, modelMessage([{ type: 'text', text: '    Disclosure:\n    Done: Checked records.\n    Next: Compare mappings.\n    Approach: Read both lists.' }]))
+  assert.equal((await read()).additionalContexts, undefined, 'ordinary prose does not reset or send an early reminder')
+  harness.emit(session, modelMessage([{ type: 'text', text: 'Disclosure:\nDone: Checked replay.\nNext: Inspect the index.' }]))
+  assertNoticeShape(await read(), 0, null)
+
+  harness.emit(session, modelMessage([{ type: 'text', text: 'Continuing the investigation.' }]))
+  await read()
+  await read()
+  assertNoticeShape(await read(), 1, null)
+  harness.emit(session, modelMessage([{ type: 'text', text: 'ok' }]))
+  for (let call = 0; call < 3; call += 1) {
+    assert.equal((await read()).additionalContexts, undefined, 'ordinary prose cannot restore an exhausted budget')
+  }
+
+  const disclosure = modelMessage([
+    { type: 'text', text: '披露：\n已做：对照了回放记录，索引差异仍待确认。\n将做：检查奖励映射。\n做法：逐项比较原始索引与选择索引。' },
+    { type: 'tool-call', name: 'read' },
+  ])
+  const firstFact = 'This stretch has included 3 inspection/search tool operations and no mutation-oriented or verification-oriented tool operations. If more investigation is still needed, identify the unresolved fact it is intended to settle.'
+  const repeatFact = 'This stretch has included 6 inspection/search tool operations and no mutation-oriented or verification-oriented tool operations. If more investigation is still needed, identify the unresolved fact it is intended to settle.'
+  for (let interval = 0; interval < 2; interval += 1) {
+    harness.emit(session, disclosure)
+    assert.equal((await read()).additionalContexts, undefined)
+    assert.equal((await read()).additionalContexts, undefined)
+    assertNoticeShape(await read(), 0, firstFact)
+    await read()
+    await read()
+    assertNoticeShape(await read(), 1, repeatFact)
+  }
 })
 
 
@@ -215,7 +255,7 @@ test('an inspection-only stretch adds objective activity context to the normal r
   )
 })
 
-test('nested native inspections enrich activity without advancing the silence cadence', { skip }, async () => {
+test('nested native inspections enrich activity without advancing the disclosure cadence', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'session-activity-nested' }
   host.apply(harness.ctx, { reminderAfterCalls: 2, maxReminders: 1 })

@@ -89,9 +89,15 @@ test('visible text excludes reasoning, images, and whitespace-only text', () => 
   assert.equal(hasVisibleText([{ type: 'reasoning', text: 'x' }, { type: 'text', text: ' ok ' }]), true)
 })
 
-test('only model-authored assistant text opens a silence interval', () => {
-  const model = { role: 'assistant', source: { kind: 'model' }, content: [{ type: 'text', text: 'Root cause found.' }] }
+test('only model-authored structured disclosure opens a disclosure interval', () => {
+  const model = {
+    role: 'assistant', source: { kind: 'model' },
+    content: [{ type: 'text', text: 'Disclosure:\nDone: Found the missing skip filter.\nNext: Fix the top-level entry.\nApproach: Reuse the filter and verify a proceed sample.' }],
+  }
   assert.equal(isModelDisclosure(model), true)
+  assert.equal(isModelDisclosure({ ...model, content: [{ type: 'text', text: 'Now the driver — the row loop and branch enumeration:' }] }), false)
+  assert.equal(isModelDisclosure({ ...model, role: 'user' }), false)
+  assert.equal(isModelDisclosure({ ...model, source: { kind: 'disclosure-policy' } }), false)
 
   assert.equal(isModelDisclosure({ ...model, content: [{ type: 'reasoning', text: 'thinking' }] }), false)
   assert.equal(isModelDisclosure({ ...model, content: [{ type: 'text', text: '  ' }] }), false)
@@ -103,6 +109,60 @@ test('only model-authored assistant text opens a silence interval', () => {
     isModelDisclosure({ role: 'assistant', source: { kind: 'plugin', plugin: 'other' }, content: [{ type: 'text', text: 'notice' }] }),
     false,
   )
+})
+
+test('Chinese disclosure and honest opening or blocked disclosures satisfy the expression contract', () => {
+  for (const text of [
+    '披露：\n已做：对照了记录，尚未定位差异。\n将做：确认索引映射。\n做法：逐项比较原始索引与回放索引。',
+    ' \r\n披露:\r\n已做: 尚未开始执行。\r\n将做: 检查枚举入口。\r\n做法: 对照入口与 skip 样例。\r\n ',
+    'Disclosure:\nDone: Verification failed because credentials are missing.\nNext: Wait for credentials.\nApproach: Rerun the same verification when credentials are available.',
+    '披露：\n已做：继续调查了。\n将做：继续调查。\n做法：继续查看。',
+  ]) {
+    const message = { role: 'assistant', source: { kind: 'model' }, content: [{ type: 'text', text }] }
+    assert.equal(isModelDisclosure(message), true, text)
+    assert.equal(isModelDisclosure(message), true, 'unchanged content remains eligible; there is no novelty test')
+  }
+})
+
+test('recognition reads the entire visible text while excluding reasoning and tool-call blocks', () => {
+  const message = {
+    role: 'assistant', source: { kind: 'model' },
+    content: [
+      { type: 'reasoning', text: 'private' },
+      { type: 'text', text: 'Disclosure:\nDone: Found the missing ' },
+      { type: 'text', text: 'filter.\nNext: Fix the entry.\nApproach: Run a proceed regression.' },
+      { type: 'tool-call', name: 'apply_patch' },
+    ],
+  }
+  assert.equal(isModelDisclosure(message), true)
+  assert.equal(isModelDisclosure({ ...message, content: [...message.content, { type: 'text', text: '\nOther prose.' }] }), false)
+})
+
+test('incomplete, mixed, quoted, fenced, or embedded structures are not disclosure', () => {
+  const valid = 'Disclosure:\nDone: Found the filter gap.\nNext: Fix the entry.\nApproach: Run a regression.'
+  for (const text of [
+    'ok', 'Root cause found.',
+    'Disclosure:\nDone: Found the filter gap.\nNext: Fix the entry.',
+    'Disclosure:\nDone:  \nNext: Fix the entry.\nApproach: Run a regression.',
+    'Disclosure:\nDone: Found the filter gap.\nNext: \t\nApproach: Run a regression.',
+    'Disclosure:\nDone: Found the filter gap.\nNext: Fix the entry.\nApproach: ',
+    'Disclosure:\nDone: Found the filter gap.\n将做：Fix the entry.\nApproach: Run a regression.',
+    'Disclosure:\nNext: Fix the entry.\nDone: Found the filter gap.\nApproach: Run a regression.',
+    'Disclosure: Example\nDone: Found the filter gap.\nNext: Fix the entry.\nApproach: Run a regression.',
+    `\`\`\`text\n${valid}\n\`\`\``,
+    valid.split('\n').map(line => `> ${line}`).join('\n'),
+    `Here is an example:\n${valid}`, `${valid}\nAnd now more prose.`,
+  ]) {
+    assert.equal(isModelDisclosure({ role: 'assistant', source: { kind: 'model' }, content: [{ type: 'text', text }] }), false, text)
+  }
+})
+
+test('Markdown indented code blocks cannot impersonate direct disclosure', () => {
+  const disclosure = 'Disclosure:\nDone: Checked records.\nNext: Compare mappings.\nApproach: Read both lists.'
+  for (const indentation of ['    ', '\t', '  \t']) {
+    const text = '\n' + disclosure.split('\n').map(line => indentation + line).join('\n') + '\n'
+    assert.equal(isModelDisclosure({ role: 'assistant', source: { kind: 'model' }, content: [{ type: 'text', text }] }), false, indentation)
+  }
 })
 
 test('one interval spends its budget one reminder per cadence period, then goes quiet', () => {
@@ -147,7 +207,7 @@ test('the first reminder is the base text and later ones add the repeat sentence
   assert.equal(reminderTextFor(2), `${DISCLOSURE_REMINDER_TEXT} ${DISCLOSURE_REPEAT_TEXT}`)
 })
 
-test('visible model text re-arms the reminder and its budget', () => {
+test('opening a disclosure interval re-arms the reminder and its budget', () => {
   const state = createSilence()
   for (let call = 0; call < 8; call += 1) {
     const index = countCompletedCall(state, 8, 3)
@@ -217,10 +277,12 @@ test('the reminder composes into a downstream decision and preserves it', () => 
   })
 })
 
-test('the standing policy asks the three disclosure questions and rules out chain-of-thought', () => {
-  assert.match(DISCLOSURE_POLICY_TEXT, /What is now confirmed\?/)
-  assert.match(DISCLOSURE_POLICY_TEXT, /change the settled plan/)
-  assert.match(DISCLOSURE_POLICY_TEXT, /What happens next/)
+test('the standing policy specifies recent work, next action, and approach without requesting private reasoning', () => {
+  assert.match(DISCLOSURE_POLICY_TEXT, /exactly four visible lines/)
+  assert.match(DISCLOSURE_POLICY_TEXT, /Done: <recent work and its result or remaining uncertainty>/)
+  assert.match(DISCLOSURE_POLICY_TEXT, /Next: <immediate intended action>/)
+  assert.match(DISCLOSURE_POLICY_TEXT, /Approach: <concrete operations or verification>/)
+  assert.match(DISCLOSURE_POLICY_TEXT, /披露：.*已做：.*将做：.*做法：/)
   assert.match(DISCLOSURE_POLICY_TEXT, /never expose private chain-of-thought/i)
   assert.doesNotMatch(DISCLOSURE_POLICY_TEXT, /think step[- ]by[- ]step|explain your reasoning|reasoning:/i)
 })
@@ -237,9 +299,10 @@ test('the standing policy covers the material disclosure moments', () => {
 })
 
 test('the reminder asks for brief disclosure and makes no claim or threat', () => {
-  assert.match(DISCLOSURE_REMINDER_TEXT, /one or two/)
-  assert.match(DISCLOSURE_REMINDER_TEXT, /what is now confirmed/)
-  assert.match(DISCLOSURE_REMINDER_TEXT, /what happens next/)
+  assert.match(DISCLOSURE_REMINDER_TEXT, /exactly four visible lines/)
+  assert.match(DISCLOSURE_REMINDER_TEXT, /Done:/)
+  assert.match(DISCLOSURE_REMINDER_TEXT, /Next:/)
+  assert.match(DISCLOSURE_REMINDER_TEXT, /Approach:/)
   assert.doesNotMatch(DISCLOSURE_REMINDER_TEXT, /\?/, 'the reminder asks the user nothing')
   assert.doesNotMatch(DISCLOSURE_REMINDER_TEXT, /\d+\s+(ordinary\s+)?(tool\s+)?calls?/i)
   assert.doesNotMatch(DISCLOSURE_REMINDER_TEXT, /deny|denied|blocked|threshold|guard/i)
@@ -248,10 +311,11 @@ test('the reminder asks for brief disclosure and makes no claim or threat', () =
 
 test('the repeat sentence states one bounded fact and never the remaining budget', () => {
   // The repeat is allowed to report what the plugin observed — this interval
-  // already got a reminder and still carries no visible model text — and the
+  // already got a reminder and still carries no structured disclosure — and the
   // first reminder stays the bare request.
   assert.equal(reminderTextFor(1).endsWith(DISCLOSURE_REPEAT_TEXT), true)
   assert.equal(reminderTextFor(0).endsWith(DISCLOSURE_REPEAT_TEXT), false)
+  assert.match(DISCLOSURE_REPEAT_TEXT, /no complete structured disclosure/)
 
   assert.doesNotMatch(DISCLOSURE_REPEAT_TEXT, /\?/, 'the repeat asks the user nothing')
   assert.doesNotMatch(DISCLOSURE_REPEAT_TEXT, /\d/, 'no counts, so no budget can be inferred')
