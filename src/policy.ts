@@ -17,7 +17,7 @@ export const DISCLOSURE_TOOL_NAME = 'disclose_progress'
  * it is present in every request that exposes the tool.
  */
 export const DISCLOSURE_TOOL_DESCRIPTION =
-  'Progress checkpoint: report done, next, approach. If work remains, call alongside the next work tool(s).'
+  'Progress checkpoint: briefly report done, next, approach. If work remains, call alongside the next work tool(s).'
 
 /**
  * Historical prompt exports remain for policy-API compatibility. The host plugin
@@ -283,7 +283,7 @@ export function withReminder<TNotice, TDecision extends ReminderCarrier<TNotice>
  * so repeating field-format instructions here would spend tokens twice.
  */
 export const DISCLOSURE_REMINDER_TEXT =
-  '[disclosure] Call disclose_progress now; if work remains, batch it with the next work tool(s).'
+  '[disclosure] Call disclose_progress now with a brief checkpoint; if work remains, batch it with the next work tool(s).'
 
 export const DISCLOSURE_REPEAT_TEXT =
   'Repeat reminder: no disclose_progress call has been observed in this stretch.'
