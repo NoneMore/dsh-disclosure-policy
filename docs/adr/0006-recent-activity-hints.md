@@ -1,10 +1,10 @@
 # Ground activity hints in recent activity independently of disclosure
 
-Status: accepted (2026-09-26). The user confirmed shared understanding, explicitly invoked implementation, and confirmed the public policy API and plugin `apply()` test seams. The runtime implements this decision.
+Status: accepted (2026-09-26), with disclosure-reset trigger updated by [ADR-0007](0007-structured-progress-tool.md). The user confirmed shared understanding, explicitly invoked implementation, and confirmed the public policy API and plugin `apply()` test seams. The runtime implements this decision.
 
 The previous activity projection covered a whole disclosure interval: one mutation- or verification-oriented operation suppressed the inspection hint for the rest of that interval, even after a long later investigation. The user selected a bounded rolling activity window rather than whole-interval accounting or accumulation since the last mutation/verification, so the hint describes recent activity and old operations naturally leave the observation range.
 
-A recognized disclosure preserves this window while resetting reminder accounting and budget. Activity hints still accompany only an already-due ordinary reminder and share its existing budget; reminder design will be reconsidered after a period of real-use observation. This separates what the hint describes from when the reminder can be delivered without introducing another reminder lane.
+A `disclose_progress` preserves this window while resetting reminder accounting and budget. Activity hints still accompany only an already-due ordinary reminder and share its existing budget; reminder design will be reconsidered after a period of real-use observation. This separates what the hint describes from when the reminder can be delivered without introducing another reminder lane.
 
 The window retains the latest 16 observed tool operations by default. A hint is eligible when that window contains at least 8 inspection/search operations by default and no operation classified as mutation- or verification-oriented. Both values are configurable independently of the reminder cadence: the user expects to tune them through real use. Mixed inspection/mutation or inspection/verification windows remain ineligible until those operations leave the window; introducing a ratio-based inspection-heavy condition is deferred.
 
