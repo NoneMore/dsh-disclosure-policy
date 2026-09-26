@@ -57,6 +57,8 @@ export const Config: z<Config> = z.object({
 interface IntervalState {
   silence: SilenceState
   activity: ActivityState
+  step: number | null
+  remindedStep: number | null
 }
 
 const SOURCE = {
@@ -94,8 +96,15 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
         intervals.set(session, {
           silence: createSilence(),
           activity: createActivity(config.activityWindowSize),
+          step: null,
+          remindedStep: null,
         })
         return
+      case 'assistant/message': {
+        const interval = intervals.get(session)
+        if (interval !== undefined) interval.step = event.data.step
+        return
+      }
       case 'turn/end':
         intervals.delete(session)
         return
@@ -120,7 +129,10 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
     },
     async execute(_args, exec) {
       const interval = exec.agent === undefined ? undefined : intervals.get(exec.agent.session)
-      if (interval !== undefined) resetSilence(interval.silence)
+      if (interval !== undefined) {
+        resetSilence(interval.silence)
+        interval.remindedStep = null
+      }
       return null
     },
   }))
@@ -152,8 +164,14 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
     const index = observe()
     if (index === null) return downstream
 
+    // Parallel top-level calls from one Assistant step may cross several cadence
+    // periods. Deliver at most one notice for that step; overdue budget remains
+    // available at the next model step rather than being spent concurrently.
+    if (interval.step !== null && interval.remindedStep === interval.step) return downstream
+
     const activityFact = inspectionActivityFact(interval.activity, config.inspectionHintMinInspections)
     markReminderDelivered(interval.silence, interval.silence.calls, index)
+    interval.remindedStep = interval.step
     return withReminder(downstream, notice(reminderTextFor(index, activityFact)))
   })
 }
