@@ -1,6 +1,6 @@
 # Repeat the silence reminder within a bounded budget
 
-Status: accepted (2026-09-17), partly superseded by [ADR-0005](0005-structural-disclosure-recognition.md) (2026-09-26; the cadence is retained, but structured disclosure replaces any-visible-text reset)
+Status: accepted (2026-09-17), partly superseded by [ADR-0005](0005-structural-disclosure-recognition.md) and [ADR-0007](0007-structured-progress-tool.md) (the cadence is retained; the reset trigger is now `disclose_progress`)
 
 Version 0.3 latched the reminder with a `reminded` boolean, so each silence interval received exactly one reminder and an ignored reminder meant the rest of the interval was silent. That contradicted the plugin's own stated goal — "make silence unlikely to last" — because the latch was the most likely to fire precisely when the model was least willing to disclose. The reminder is now a bounded cadence instead of a one-shot: at most `maxReminders` notices (default `3`) per interval, one every `reminderAfterCalls` completed top-level calls, with `maxReminders: 1` restoring the historical behavior. A repeat carries the same request plus one fixed sentence, and never states how many reminders remain.
 
