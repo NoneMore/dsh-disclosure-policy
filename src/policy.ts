@@ -311,8 +311,9 @@ export const DISCLOSURE_POLICY_TEXT = [
  * `tools/post-execute`.
  *
  * It asks for the same three answers as the standing policy in one or two
- * sentences. It is purely an instruction: no runtime fact row, no threat of
- * denial, no request for user input, and no chain-of-thought request.
+ * sentences. The base text is purely instructional; a caller may compose one
+ * objective activity fact beside it. Neither path threatens denial, requests
+ * user input, or asks for chain-of-thought.
  */
 export const DISCLOSURE_REMINDER_TEXT = [
   '[disclosure] Before continuing this long stretch of tool work, send one or two concise sentences of visible disclosure: what is now confirmed, whether the settled plan or constraints changed, and what happens next — including anything worth the supervisor’s intervention.',

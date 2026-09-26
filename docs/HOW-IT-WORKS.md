@@ -115,18 +115,25 @@ interface SilenceState {
   firstReminderAt: number | null   // call count where the first reminder was delivered
   delivered: number                // reminders delivered, and the budget index of the next
 }
+
+interface ActivityState {
+  inspect: number
+  mutate: number
+  verify: number
+  other: number
+}
 ```
 
-Storage is a per-`apply` `WeakMap<Session, SilenceState>`, so state is plugin-local and dies with the session or the fiber.
+Storage is a per-`apply` `WeakMap<Session, { silence: SilenceState; activity: ActivityState }>`, so both projections are plugin-local and die with the session or the fiber. Activity is context for the one reminder lane, not a second trigger or budget.
 
 Lifecycle:
 
 | Event | Effect |
 |---|---|
-| `turn/start` | `silences.set(session, createSilence())` — replaces any previous record |
-| `assistant/message` with visible model text | `resetSilence(state)` — `calls = 0`, `firstReminderAt = null`, `delivered = 0` |
-| `tools/post-execute` for a top-level call | `countCompletedCall(state, threshold, budget, { nested })` |
-| `turn/end` | `silences.delete(session)` |
+| `turn/start` | creates fresh silence and activity projections |
+| `assistant/message` with visible model text | resets both projections |
+| every `tools/post-execute` | classifies `exec.name` into activity; top-level calls also advance silence cadence |
+| `turn/end` | discards the interval |
 
 `turn/start` is the **only** initialization point. Nothing scans session history, which is what current DSH policy requires for new production code (`docs/SOURCES.md` section A). The cost is explicit: a hot reload mid-turn does not reconstruct the current interval, so accounting starts at the next `turn/start`.
 
@@ -190,9 +197,9 @@ return withReminder(downstream, notice(reminderTextFor(index)))  // 3. compose, 
 
 `postExecute()` runs for every dispatch outcome, and the pipeline routes a pre-execute denial back through it: a pre-policy denial materializes `{ kind: 'post-result', exec, result }` (`DSHROOT/dsh-tools/lib/index.js:3127-3139`), which `finalizeScheduledExecution()` then passes to `postExecute()` (`:3241-3243`). So the count is independent of success, failure, or another policy's denial — exactly as specified — without the plugin inspecting the result at all. If a downstream post-execute listener throws, the plugin advances the count before rethrowing but does **not** call `markReminderDelivered`, so the throwing boundary cannot consume a budget slot; the anchor stays unset and the reminder is delivered at the next boundary that can carry `additionalContexts`.
 
-### Nested calls do not count
+### Nested calls do not count for silence, but they do count for activity
 
-`ToolExecutionInput.parent` is the opaque token of the enclosing transport execution; PTC mode sets it on SDK sub-dispatches (`DSHROOT/dsh-tools/lib/types/index.d.ts:209-218`). `countCompletedCall(..., { nested: exec.parent !== undefined })` returns immediately for those, so a `run_code` program that dispatches fifty native calls advances the interval once, for its own top-level call.
+`ToolExecutionInput.parent` is the opaque token of the enclosing transport execution; PTC mode sets it on SDK sub-dispatches (`DSHROOT/dsh-tools/lib/types/index.d.ts:209-218`). `countCompletedCall(..., { nested: exec.parent !== undefined })` returns immediately for those, so a `run_code` program that dispatches fifty native calls advances the silence interval once, for its own top-level call. The activity projection still classifies each completed nested tool by its structured `exec.name`, so composite transports cannot hide a large inspection/search stretch from the factual reminder context.
 
 ### At most one reminder per cadence period, up to the interval budget
 
@@ -215,7 +222,7 @@ return index
 
 The first reminder anchors the cadence at the threshold call, and each later one is due `reminderAfterCalls` calls after that anchor, which is why a parallel step crosses at most one period and yields at most one notice. Because the anchor is set by `markReminderDelivered` rather than by counting alone, a boundary that cannot deliver leaves the anchor unset and the cadence starts at the next boundary that can. The counter is never reset by a reminder, so it keeps measuring the interval until visible model text opens a new one.
 
-The returned index selects the text: index `0` is `DISCLOSURE_REMINDER_TEXT`, and any later index appends `DISCLOSURE_REPEAT_TEXT`. Only the index decides, so the repeat sentence is stable across reminders and never states a remaining count (ADR-0004).
+The returned index selects the base/repeat text. Before composition, `inspectionActivityFact()` may add one objective suffix when the interval contains at least `reminderAfterCalls` inspection/search operations and no mutation- or verification-oriented operation. The suffix reports the observed mix and asks which unresolved fact would justify more investigation; it does not create a new reminder or label the work as excessive. Index `0` still uses the base request, and any later index also appends `DISCLOSURE_REPEAT_TEXT` (ADR-0004).
 
 ### Composition
 
@@ -267,8 +274,9 @@ model replies with reasoning only, then calls read
   -> assistant/message: reasoning block only -> interval unchanged
   -> tools/post-execute(read): calls = 1
 
-model calls grep, glob, bash, read, edit, bash, read   (7 more calls)
+model calls grep, glob, read, search, fetch, read, grep   (7 more top-level calls)
   -> calls = 8 == reminderAfterCalls on the eighth settling call
+  -> activity is inspection-only, so the notice includes the observed inspection count
   -> that call's post-execute decision gains one plugin notice (index 0)
   -> the notice enters the next-step inbox
 
@@ -276,8 +284,8 @@ model keeps calling tools without visible text  (8 more calls)
   -> calls = 16 -> second notice (index 1, repeat sentence appended)
 
 model's next step sees the notice and emits visible text plus a tool call
-  -> assistant/message with visible text -> resetSilence(): calls = 0, firstReminderAt = null, delivered = 0
-  -> its tool call settles -> calls = 1
+  -> assistant/message with visible text -> resets silence and activity
+  -> its tool call settles -> calls = 1 and starts the new activity mix
 
 turn/end
   -> state discarded
@@ -307,6 +315,7 @@ Denied variant: a call denied by another policy still returns through `post-exec
 
 - **Hot reload loses the current interval.** By design: no history scan. The first reminder after a reload can be delayed to the next turn.
 - **The threshold is a failsafe, not a semantic trigger.** Nothing in DSH exposes "a phase completed" or "a test now passes", so `reminderAfterCalls` measures silence, not meaning. The standing policy carries the meaning.
+- **Activity shape is deliberately shallow.** It classifies structured tool names, not arbitrary shell command text, and says nothing about whether an operation was useful, whether a mutation actually changed files, or whether a verification proved the task correct.
 - **A reminder can be ignored.** Disclosure is best-effort; the plugin has no way to compel it and does not try (ADR-0003). ADR-0004 raises the cost of staying silent with a bounded repeat cadence, but an interval that spends its whole budget is still silent for the rest of that turn.
 - **Visible text is the only reset, and it is not scored.** A one-word acknowledgement opens a new interval exactly like a real disclosure, so the cadence raises the cost of silence but not of evasion; the plugin does not judge prose quality (ADR-0003, ADR-0004).
 - **The interval does not survive `turn/end`.** A model that keeps opening fresh turns is not covered by the cadence (ADR-0004).
