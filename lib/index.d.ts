@@ -13,14 +13,14 @@ export declare const inject: string[];
 export interface Config {
     /**
      * Completed top-level tool calls that advance the reminder cadence by one
-     * position. `0` disables runtime reminders while keeping the standing policy.
-     * Default 8.
+     * position. `0` disables runtime reminders while leaving the disclosure tool
+     * available. Default 8.
      */
     reminderAfterCalls?: number;
     /**
      * Reminder budget for one disclosure interval: at most this many notices, one
-     * every `reminderAfterCalls` completed top-level calls. `1` is the historical
-     * one-shot cadence; `0` disables runtime reminders. Default 3.
+     * every `reminderAfterCalls` completed top-level calls. `1` restores a
+     * one-shot reminder; `0` disables runtime reminders. Default 3.
      */
     maxReminders?: number;
     /** Recent operations retained, including nested native tools; 0 disables hints alone. Default 16. */
@@ -32,17 +32,18 @@ export declare const Config: z<Config>;
 /**
  * `dsh-disclosure-policy` host plugin.
  *
- * Two extension points only:
+ * Disclosure is a first-class model action rather than a magic Assistant-text
+ * shape. The registered `disclose_progress` tool carries the standing policy in
+ * its compact schema description, records model-authored progress as durable tool
+ * arguments, and opens a fresh reminder interval when it executes.
  *
- * - `session/event` maintains one turn-local disclosure interval per session from
- *   first-party durable facts;
- * - `tools/post-execute` counts settled top-level calls and appends the due
- *   soft reminder as next-step context, at most `maxReminders` per interval.
+ * Runtime accounting still uses only two lightweight observation points:
  *
- * The standing policy is a static prompt section. No guard is registered, no
- * task state is read or written, and nothing is steered from an event callback:
- * see ADR-0001 and ADR-0003. The runtime keeps live projections instead of
- * scanning session history, which current DSH policy requires for new code; a
- * hot reload mid-turn therefore starts accounting at the next `turn/start`.
+ * - `session/event` creates/discards one turn-local interval;
+ * - `tools/post-execute` counts settled work and appends bounded reminder
+ *   context when the model has gone too long without calling `disclose_progress`.
+ *
+ * No guard, TODO mutation, semantic prose classifier, or turn-stop steering is
+ * registered. See ADR-0007.
  */
 export declare function apply(ctx: Context, rawConfig?: Config): void;

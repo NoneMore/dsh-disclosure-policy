@@ -78,7 +78,7 @@ final answer
 
 ### DSH mapping
 
-DSH does not need to clone `MessagePhase`. Its native `assistant/message` events and Web Turn projection already support reply-bearing Assistant material before the final answer. The plugin should therefore **cause the model to use DSH's existing mid-turn Assistant channel**, not create a second transcript system.
+DSH does not currently expose Codex's explicit `commentary` / `final` phase distinction to this plugin. Native `assistant/message` can appear before Turn completion, but that does **not** guarantee non-terminal semantics. ADR-0007 therefore maps progress to the structured `disclose_progress` tool action rather than asking downstream transports or the runtime to infer phase from Assistant prose.
 
 ### Important portability lesson
 
@@ -86,13 +86,15 @@ If a host or transport drops the distinction between interim and final text, use
 
 https://github.com/openai/codex/issues/30190
 
-For DSH integrations, preserve at least this semantic distinction even if the wire format differs:
+For DSH integrations, preserve the semantic distinction explicitly rather than inferring it from visibility:
 
 ```text
-visible assistant text while turn is still active
+progress action / commentary
 vs.
-terminal answer after turn completion
+terminal answer
 ```
+
+In this plugin the first lane is `disclose_progress`; final Assistant prose stays in the second lane.
 
 ---
 
@@ -135,7 +137,7 @@ Also bad:
 Here is my full internal reasoning for why I chose this implementation...
 ```
 
-The current plugin recognizes its agreed four-line structure only in visible model-authored Assistant `text`, never in reasoning blocks (ADR-0005). The structure requirement is local policy, not a Codex requirement.
+The former ADR-0005 implementation recognized a four-line Assistant-text structure. ADR-0007 supersedes that runtime protocol: the current plugin reads no Assistant prose for disclosure and uses the model-authored `disclose_progress` arguments instead. This is a DSH adaptation, not a Codex requirement.
 
 ---
 

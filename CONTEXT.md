@@ -17,15 +17,15 @@ _Avoid_: approval gate, feedback cycle, steering request, 审批门, 反馈循�
 ### Information
 
 **Disclosure** (披露):
-Model-authored information about recent work and its results or remaining uncertainty, the next intended action, and the intended approach that helps a supervisor decide whether to intervene during execution. Disclosure is best-effort communication, not a runtime guarantee or a substitute for task state.
+A model-authored `disclose_progress` action carrying recent work and its result or remaining uncertainty, the next intended action, and the intended approach. It helps a supervisor decide whether to intervene during execution. Disclosure is best-effort communication, not a runtime guarantee or a substitute for task state.
 _Avoid_: report, progress update, narration, status, 汇报, 进度更新, 旁白
 
 **Silence interval** (静默区间):
-A span of execution between visible model messages in which the supervisor has seen no new visible model text.
-_Avoid_: timeout, watchdog window, 超时, 看门狗
+Historical term for prose-based communication freshness. The current plugin does not use visible-message silence as its reset signal.
+_Avoid_: timeout, watchdog window, disclosure interval, 超时, 看门狗
 
 **Disclosure interval** (披露间隔):
-A span of execution between explicitly expressed disclosures; ordinary visible model text may occur within it. Visible speech alone does not establish that a disclosure has occurred.
+A span of execution between successful `disclose_progress` actions. Ordinary visible model text may occur within it and has no effect on disclosure accounting.
 _Avoid_: silence interval, 静默区间
 
 **Activity hint** (活动提示):

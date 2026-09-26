@@ -1,6 +1,19 @@
 # Verification record
 
-## Recent activity window: current checkout (2026-09-26)
+## Structured progress tool: current checkout (2026-09-26)
+
+Verified the ADR-0007 refactor on PR #3 / `fix/continue-after-disclosure`, with package version still `0.4.1` (unreleased changes).
+
+- GitHub Actions CI run **#64** passed on Node **22.19.0** and **24**.
+- On both jobs: `npm run typecheck`, `npm run build`, `npm test`, committed-`lib/` verification, and package-content verification passed.
+- Final test result: **33 passed, 0 failed, 0 skipped**.
+- Runtime coverage includes native and nested/PTC `disclose_progress`, failed and whitespace-only checkpoints, same-step parallel settlement ordering, one-reminder-per-model-step fencing, activity preservation, downstream failure/block composition, turn lifecycle, and absence of guards / turn-stop steering.
+- The model-facing tool declaration is regression-bounded to less than **360 JSON bytes** in the fake-host projection. The tool description and base reminder are each **118 characters**. Parameter descriptions are omitted.
+- Successful checkpoint output is canonical `null` and renders **zero model-facing result blocks**. The tool explicitly opts into parallel scheduling so it does not fall into DSH's fail-closed exclusive default.
+- No standing disclosure system-prompt section is mounted. The now-unused direct `dsh-agent` and `dsh-system-prompt` peer/dev dependencies were removed.
+- The current CI verifies packaging and static/runtime contracts but does **not** drive a real routed model through a checkpoint in a Web profile. Earlier profile boots below predate ADR-0007 and must not be treated as live evidence for the new tool protocol.
+
+## Recent activity window: prior checkpoint (2026-09-26)
 
 Verified ADR-0006 on the current branch with package version still `0.4.1` (unreleased changes). Review fixed point: `adae5e6d80e9eb05db97d5515a5531ba5a89f54a`.
 
@@ -124,21 +137,18 @@ budget index each one carried and not which turn each one belonged to, so repeat
 session are consistent with both the new cadence and the old one-shot latch repeating once per turn.
 The cadence and budget claims rest on the unit and runtime tests.
 
-## Not exercised end to end
+## Not exercised end to end for the current refactor
 
-The boot proves that the packed plugin resolves, validates, and mounts in a real profile. It did not
-drive a controlled live model turn through a complete budget, so the following still have no
-end-to-end evidence:
+The CI proves the host adapter, accounting state machine, tool schema, build output, and package shape. The following still need real-profile / real-model evidence before they should be stated as observed behavior:
 
-1. the prompt section lands at order `10150` and is not suppressed by a deployment `complete: true` prompt;
-2. a real `assistant/message` carrying both visible text and tool calls resets the interval before the
-   tool results settle;
-3. nested dispatches under the profile's tool mode carry `exec.parent` and therefore do not count;
-4. a reminder appears as one plugin-sourced `notice` row and reaches the next model step;
-5. composition with other tool-policy plugins in the profile (result transformers, spill policy, approval
-   gates) leaves their decisions intact;
-6. no guard is registered and no tool call is ever denied by this plugin;
-7. the interval stays silent after `maxReminders` notices until visible model text opens a new one.
+1. a routed model actually chooses `disclose_progress` at the semantic moments in its compact description and after a reminder;
+2. when executable work remains, the model commonly batches the checkpoint with sibling work calls rather than spending a dedicated model round-trip;
+3. native and PTC/nested tool rows expose the checkpoint arguments clearly enough for supervision in the target client surface;
+4. deployment-specific pre/post tool policies (including approval or blocking policy) compose with the checkpoint without unexpected interaction friction;
+5. a nested PTC checkpoint resets the interval in the real profile exactly as the fake-host regression asserts;
+6. the compact reminder reaches the next model step under the target provider route and the one-reminder-per-step fence behaves as expected under real parallel fan-out.
+
+No current claim depends on Assistant prose resetting disclosure state, a standing prompt section, or `agent/turn-stopping` steering; ADR-0007 removed those mechanisms.
 
 ## Previous releases
 
