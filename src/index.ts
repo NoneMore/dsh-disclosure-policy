@@ -10,6 +10,7 @@ import {
   createSilence,
   DEFAULT_CONFIG,
   DISCLOSURE_PLUGIN_NAME,
+  DISCLOSURE_TOOL_DESCRIPTION,
   DISCLOSURE_TOOL_NAME,
   inspectionActivityFact,
   markReminderDelivered,
@@ -64,12 +65,16 @@ export const Config: z<Config> = z.object({
 interface IntervalState {
   silence: SilenceState
   activity: ActivityState
+  currentStep: number | null
+  progressAttemptStep: number | null
+  checkpointStep: number | null
+  reminderDeliveredStep: number | null
 }
 
 const SOURCE = {
   kind: 'disclosure-policy' as const,
   form: 'notice' as const,
-  summary: 'Disclosure reminder',
+  summary: 'Progress checkpoint reminder',
 }
 
 function notice(text: string): UserMessage {
@@ -103,8 +108,26 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
   ctx.on('session/event', (session, event) => {
     switch (event.type) {
       case 'turn/start':
-        intervals.set(session, { silence: createSilence(), activity: createActivity(config.activityWindowSize) })
+        intervals.set(session, {
+          silence: createSilence(),
+          activity: createActivity(config.activityWindowSize),
+          currentStep: null,
+          progressAttemptStep: null,
+          checkpointStep: null,
+          reminderDeliveredStep: null,
+        })
         return
+      case 'assistant/message': {
+        const interval = intervals.get(session)
+        if (interval === undefined) return
+        interval.currentStep = event.data.step
+        interval.checkpointStep = null
+        interval.progressAttemptStep = event.data.message.content.some(block =>
+          block.type === 'tool-call' && block.name === DISCLOSURE_TOOL_NAME)
+          ? event.data.step
+          : null
+        return
+      }
       case 'turn/end':
         intervals.delete(session)
         return
@@ -115,30 +138,17 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
 
   ctx.tools.register(defineTool({
     name: DISCLOSURE_TOOL_NAME,
-    description: 'Report a brief non-terminal progress checkpoint to the supervisor. Use for material findings, phase completion, plan/constraint changes, verification, blockers, or when reminded; continue work afterward when possible.',
+    description: DISCLOSURE_TOOL_DESCRIPTION,
     parameters: {
-      done: {
-        type: 'string',
-        required: true,
-        description: 'Recent work and its result or remaining uncertainty.',
-      },
-      next: {
-        type: 'string',
-        required: true,
-        description: 'Immediate intended action.',
-      },
-      approach: {
-        type: 'string',
-        required: true,
-        description: 'Concrete operations or verification.',
-      },
+      done: { type: 'string', required: true },
+      next: { type: 'string', required: true },
+      approach: { type: 'string', required: true },
     },
     output: {
       schema: { type: 'null' },
-      // Keep native model-facing result overhead to one tiny token. In PTC mode
-      // nested canonical values remain execution-local while the durable sub-call
-      // still exposes the model-authored arguments to the supervisor.
-      render: () => [{ type: 'text' as const, text: 'ok' }],
+      // The call arguments are the human-facing disclosure. Echoing them in the
+      // result would duplicate context, so successful disclosure has no result text.
+      render: () => [],
     },
     // A disclosure is an ordering boundary: if the same model response also
     // requests more tools, run this checkpoint alone in submission order before
@@ -149,7 +159,11 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
         throw new Error('disclose_progress fields must be non-empty')
       }
       const interval = exec.agent === undefined ? undefined : intervals.get(exec.agent.session)
-      if (interval !== undefined) resetSilence(interval.silence)
+      if (interval !== undefined) {
+        resetSilence(interval.silence)
+        interval.checkpointStep = interval.currentStep
+        interval.progressAttemptStep = interval.currentStep
+      }
       return null
     },
   }))
@@ -160,9 +174,22 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
   // call of that fresh interval.
   ctx.on('tools/post-execute', async (exec, _result, next): Promise<PostToolDecision> => {
     const interval = exec.agent === undefined ? undefined : intervals.get(exec.agent.session)
+
+    // A direct call is advertised in assistant/message before sibling tools run.
+    // A nested PTC call is not, so record the attempt here as well. Either way the
+    // progress action itself is cadence/activity-neutral.
+    if (exec.name === DISCLOSURE_TOOL_NAME) {
+      if (interval !== undefined) interval.progressAttemptStep = interval.currentStep
+      return next()
+    }
+
     const observe = (): number | null => {
-      if (interval === undefined || exec.name === DISCLOSURE_TOOL_NAME) return null
+      if (interval === undefined) return null
       recordActivity(interval.activity, classifyToolActivity(exec.name))
+      // A successful checkpoint makes every later settlement from the same model
+      // step part of the checkpoint boundary, regardless of parallel settlement
+      // order. Charge only work from a later model step to the fresh interval.
+      if (interval.currentStep !== null && interval.checkpointStep === interval.currentStep) return null
       return countCompletedCall(interval.silence, config.reminderAfterCalls, config.maxReminders, {
         nested: exec.parent !== undefined,
       })
@@ -176,12 +203,22 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
       throw error
     }
 
-    if (interval === undefined || exec.name === DISCLOSURE_TOOL_NAME) return downstream
+    if (interval === undefined) return downstream
     const index = observe()
     if (index === null) return downstream
 
+    const step = interval.currentStep
+    // If this step is already trying to disclose, do not race it with a stale
+    // reminder. Likewise, one model step can carry at most one reminder even if a
+    // large parallel fan-out crosses several cadence periods.
+    if (
+      step !== null
+      && (interval.progressAttemptStep === step || interval.reminderDeliveredStep === step)
+    ) return downstream
+
     const activityFact = inspectionActivityFact(interval.activity, config.inspectionHintMinInspections)
     markReminderDelivered(interval.silence, interval.silence.calls, index)
+    interval.reminderDeliveredStep = step
     return withReminder(downstream, notice(reminderTextFor(index, activityFact)))
   })
 }
