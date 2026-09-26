@@ -13,14 +13,14 @@ export declare const DISCLOSURE_TOOL_NAME = "disclose_progress";
  * The tool schema is the standing model-facing contract. Keep this short because
  * it is present in every request that exposes the tool.
  */
-export declare const DISCLOSURE_TOOL_DESCRIPTION = "Checkpoint long autonomous work: report done, next, and approach; then continue unless blocked.";
+export declare const DISCLOSURE_TOOL_DESCRIPTION = "Progress checkpoint: briefly report done, next, approach. If work remains, call alongside the next work tool(s).";
 /**
  * Historical prompt exports remain for policy-API compatibility. The host plugin
  * no longer mounts this section, so they add zero model-context cost.
  */
 export declare const DISCLOSURE_POLICY_ORDER = 10150;
 export declare const DISCLOSURE_POLICY_SECTION_NAME = "plugin:disclosure-policy:policy";
-export declare const DISCLOSURE_POLICY_TEXT = "Checkpoint long autonomous work: report done, next, and approach; then continue unless blocked.";
+export declare const DISCLOSURE_POLICY_TEXT = "Progress checkpoint: briefly report done, next, approach. If work remains, call alongside the next work tool(s).";
 export interface DisclosureConfig {
     /**
      * Completed top-level work calls that advance the reminder cadence by one
@@ -116,6 +116,6 @@ export declare function withReminder<TNotice, TDecision extends ReminderCarrier<
  * lives in the `disclose_progress` tool schema, which the model already receives,
  * so repeating field-format instructions here would spend tokens twice.
  */
-export declare const DISCLOSURE_REMINDER_TEXT = "[disclosure] Call disclose_progress now with brief done, next, and approach; continue unless blocked.";
+export declare const DISCLOSURE_REMINDER_TEXT = "[disclosure] Call disclose_progress now with a brief checkpoint; if work remains, batch it with the next work tool(s).";
 export declare const DISCLOSURE_REPEAT_TEXT = "Repeat reminder: no disclose_progress call has been observed in this stretch.";
 export declare function reminderTextFor(index: number, activityFact?: string | null): string;
