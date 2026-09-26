@@ -10,7 +10,6 @@ import {
   createSilence,
   DEFAULT_CONFIG,
   DISCLOSURE_PLUGIN_NAME,
-  DISCLOSURE_TOOL_DESCRIPTION,
   DISCLOSURE_TOOL_NAME,
   inspectionActivityFact,
   markReminderDelivered,
@@ -37,9 +36,17 @@ export const name = DISCLOSURE_PLUGIN_NAME
 export const inject = ['tools']
 
 export interface Config {
-  /** Completed top-level non-disclosure calls per reminder period. 0 disables reminders. Default 8. */
+  /**
+   * Completed top-level tool calls that advance the reminder cadence by one
+   * position. `0` disables runtime reminders while leaving the disclosure tool
+   * available. Default 8.
+   */
   reminderAfterCalls?: number
-  /** Reminder budget per disclosure interval. 0 disables reminders. Default 3. */
+  /**
+   * Reminder budget for one disclosure interval: at most this many notices, one
+   * every `reminderAfterCalls` completed top-level calls. `1` restores a
+   * one-shot reminder; `0` disables runtime reminders. Default 3.
+   */
   maxReminders?: number
   /** Recent operations retained, including nested native tools; 0 disables hints alone. Default 16. */
   activityWindowSize?: number
@@ -57,16 +64,12 @@ export const Config: z<Config> = z.object({
 interface IntervalState {
   silence: SilenceState
   activity: ActivityState
-  step: number | null
-  remindedStep: number | null
-  pendingDisclosureStep: number | null
-  disclosedStep: number | null
 }
 
 const SOURCE = {
   kind: 'disclosure-policy' as const,
   form: 'notice' as const,
-  summary: 'Progress checkpoint reminder',
+  summary: 'Disclosure reminder',
 }
 
 function notice(text: string): UserMessage {
@@ -77,16 +80,21 @@ function notice(text: string): UserMessage {
 }
 
 /**
- * Host adapter.
+ * `dsh-disclosure-policy` host plugin.
  *
- * Disclosure is a model-authored structured tool action rather than Assistant
- * prose. That removes the ambiguity between "progress update" and "terminal
- * response": a successful disclose_progress call resets the interval and the
- * agent naturally continues through the normal tool loop.
+ * Disclosure is a first-class model action rather than a magic Assistant-text
+ * shape. The registered `disclose_progress` tool carries the standing policy in
+ * its compact schema description, records model-authored progress as durable tool
+ * arguments, and opens a fresh reminder interval when it executes.
  *
- * Context cost stays bounded: no standing prompt section is installed, the tool
- * declaration is intentionally compact, its successful result renders no model
- * text, and reminders contain no format template.
+ * Runtime accounting still uses only two lightweight observation points:
+ *
+ * - `session/event` creates/discards one turn-local interval;
+ * - `tools/post-execute` counts settled work and appends bounded reminder
+ *   context when the model has gone too long without calling `disclose_progress`.
+ *
+ * No guard, TODO mutation, semantic prose classifier, or turn-stop steering is
+ * registered. See ADR-0007.
  */
 export function apply(ctx: Context, rawConfig: Config = {}): void {
   const config = resolveConfig(rawConfig)
@@ -95,26 +103,8 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
   ctx.on('session/event', (session, event) => {
     switch (event.type) {
       case 'turn/start':
-        intervals.set(session, {
-          silence: createSilence(),
-          activity: createActivity(config.activityWindowSize),
-          step: null,
-          remindedStep: null,
-          pendingDisclosureStep: null,
-          disclosedStep: null,
-        })
+        intervals.set(session, { silence: createSilence(), activity: createActivity(config.activityWindowSize) })
         return
-      case 'assistant/message': {
-        const interval = intervals.get(session)
-        if (interval === undefined) return
-        interval.step = event.data.step
-        interval.remindedStep = interval.remindedStep === event.data.step ? interval.remindedStep : null
-        interval.disclosedStep = null
-        interval.pendingDisclosureStep = event.data.message.content.some(
-          block => block.type === 'tool-call' && block.name === DISCLOSURE_TOOL_NAME,
-        ) ? event.data.step : null
-        return
-      }
       case 'turn/end':
         intervals.delete(session)
         return
@@ -125,46 +115,54 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
 
   ctx.tools.register(defineTool({
     name: DISCLOSURE_TOOL_NAME,
-    description: DISCLOSURE_TOOL_DESCRIPTION,
+    description: 'Report a brief non-terminal progress checkpoint to the supervisor. Use for material findings, phase completion, plan/constraint changes, verification, blockers, or when reminded; continue work afterward when possible.',
     parameters: {
-      done: { type: 'string', required: true },
-      next: { type: 'string', required: true },
-      approach: { type: 'string', required: true },
+      done: {
+        type: 'string',
+        required: true,
+        description: 'Recent work and its result or remaining uncertainty.',
+      },
+      next: {
+        type: 'string',
+        required: true,
+        description: 'Immediate intended action.',
+      },
+      approach: {
+        type: 'string',
+        required: true,
+        description: 'Concrete operations or verification.',
+      },
     },
     output: {
       schema: { type: 'null' },
-      // The model already authored the useful information in the arguments.
-      // Returning no content avoids echoing it back into the next request.
-      render: () => [],
+      // Keep native model-facing result overhead to one tiny token. In PTC mode
+      // nested canonical values remain execution-local while the durable sub-call
+      // still exposes the model-authored arguments to the supervisor.
+      render: () => [{ type: 'text' as const, text: 'ok' }],
     },
-    async execute(_args, exec) {
-      const interval = exec.agent === undefined ? undefined : intervals.get(exec.agent.session)
-      if (interval !== undefined) {
-        resetSilence(interval.silence)
-        interval.remindedStep = null
-        interval.pendingDisclosureStep = null
-        interval.disclosedStep = interval.step
+    // A disclosure is an ordering boundary: if the same model response also
+    // requests more tools, run this checkpoint alone in submission order before
+    // later work rather than racing it with the work it is describing.
+    isConcurrencySafe: () => false,
+    async execute(args, exec) {
+      if (args.done.trim() === '' || args.next.trim() === '' || args.approach.trim() === '') {
+        throw new Error('disclose_progress fields must be non-empty')
       }
+      const interval = exec.agent === undefined ? undefined : intervals.get(exec.agent.session)
+      if (interval !== undefined) resetSilence(interval.silence)
       return null
     },
   }))
 
+  // Soft reminders compose with downstream post-execute policy and never deny a
+  // call. The disclosure tool itself is accounting-neutral: executing it already
+  // opened a new interval, and treating it as work would immediately consume one
+  // call of that fresh interval.
   ctx.on('tools/post-execute', async (exec, _result, next): Promise<PostToolDecision> => {
     const interval = exec.agent === undefined ? undefined : intervals.get(exec.agent.session)
-
-    // disclose_progress is the boundary itself. It neither enters the activity
-    // window nor advances the cadence; its executor has already reset accounting.
-    if (exec.name === DISCLOSURE_TOOL_NAME) return await next()
-
     const observe = (): number | null => {
-      if (interval === undefined) return null
+      if (interval === undefined || exec.name === DISCLOSURE_TOOL_NAME) return null
       recordActivity(interval.activity, classifyToolActivity(exec.name))
-      // A successful checkpoint makes its whole Assistant step the boundary.
-      // Sibling top-level calls settling after it are therefore not charged to
-      // the fresh interval. Nested ordinary calls never advance cadence anyway.
-      if (interval.step !== null && interval.disclosedStep === interval.step && exec.parent === undefined) {
-        return null
-      }
       return countCompletedCall(interval.silence, config.reminderAfterCalls, config.maxReminders, {
         nested: exec.parent !== undefined,
       })
@@ -178,24 +176,12 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
       throw error
     }
 
-    if (interval === undefined) return downstream
+    if (interval === undefined || exec.name === DISCLOSURE_TOOL_NAME) return downstream
     const index = observe()
     if (index === null) return downstream
 
-    // A direct progress tool call is known from the committed Assistant message
-    // before dispatch. Delay any due reminder until that attempt settles: success
-    // resets the interval, while failure leaves the overdue reminder for the next
-    // model step. This prevents a stale reminder racing a parallel checkpoint.
-    if (interval.step !== null && interval.pendingDisclosureStep === interval.step) return downstream
-
-    // Parallel top-level calls from one Assistant step may cross several cadence
-    // periods. Deliver at most one notice for that step; overdue budget remains
-    // available at the next model step rather than being spent concurrently.
-    if (interval.step !== null && interval.remindedStep === interval.step) return downstream
-
     const activityFact = inspectionActivityFact(interval.activity, config.inspectionHintMinInspections)
     markReminderDelivered(interval.silence, interval.silence.calls, index)
-    interval.remindedStep = interval.step
     return withReminder(downstream, notice(reminderTextFor(index, activityFact)))
   })
 }
