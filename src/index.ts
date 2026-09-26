@@ -145,6 +145,9 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
       next: { type: 'string', required: true },
       approach: { type: 'string', required: true },
     },
+    // DSH is fail-closed here: omission means exclusive. This no-I/O checkpoint
+    // is safe to overlap with sibling work and must not create a scheduling barrier.
+    isConcurrencySafe: () => true,
     output: {
       schema: { type: 'null' },
       // The call arguments are the human-facing disclosure. Echoing them in the
