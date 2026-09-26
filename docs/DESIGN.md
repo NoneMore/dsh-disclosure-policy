@@ -77,9 +77,9 @@ These are regression guards against prompt creep.
 
 ### Why no `deferLoading`
 
-DSH preserves `deferLoading`, but an explicitly deferred baseline tool remains deferred until a retained addition activates it. This plugin needs its control primitive available from the beginning of the turn. PTC mode also carries a generated SDK representation, so deferred native declaration is not a universal context saving.
+Eligibility is handled by Agent-scoped registration rather than deferred loading. PTC/both Agents and runtime children never receive the tool, while an eligible native root receives the compact declaration immediately after its Agent setup and before queued input is released.
 
-The compact always-available schema is the safer trade. Dynamic registration would also emit tool-update history and disturb request-prefix stability for a saving that is only a few hundred schema bytes.
+Using `deferLoading` inside an eligible root would solve a different problem: it would delay a tool that the policy wants available for proactive semantic checkpoints from the beginning of that Agent's work.
 
 ## Eligibility and Agent scope
 
