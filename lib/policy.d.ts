@@ -13,9 +13,14 @@ export declare const DISCLOSURE_TOOL_NAME = "disclose_progress";
  * The tool schema is the standing model-facing contract. Keep this short because
  * it is present in every request that exposes the tool.
  */
-export declare const DISCLOSURE_TOOL_DESCRIPTION = "Report material progress: done, next, and approach; continue unless blocked. Use after findings or verification.";
-/** Legacy export retained for callers; no separate prompt section is installed. */
-export declare const DISCLOSURE_POLICY_TEXT = "Report material progress: done, next, and approach; continue unless blocked. Use after findings or verification.";
+export declare const DISCLOSURE_TOOL_DESCRIPTION = "Checkpoint long autonomous work: report done, next, and approach; then continue unless blocked.";
+/**
+ * Historical prompt exports remain for policy-API compatibility. The host plugin
+ * no longer mounts this section, so they add zero model-context cost.
+ */
+export declare const DISCLOSURE_POLICY_ORDER = 10150;
+export declare const DISCLOSURE_POLICY_SECTION_NAME = "plugin:disclosure-policy:policy";
+export declare const DISCLOSURE_POLICY_TEXT = "Checkpoint long autonomous work: report done, next, and approach; then continue unless blocked.";
 export interface DisclosureConfig {
     /**
      * Completed top-level work calls that advance the reminder cadence by one
