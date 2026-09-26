@@ -1,5 +1,18 @@
 # Verification record
 
+## Reminder backoff without a hard cap: current checkout (2026-09-26)
+
+Verified PR #6 / `fix/backoff-disclosure-reminders`, with package version still `0.4.1` (unreleased changes).
+
+- GitHub Actions CI run **#79** passed on Node **22.19.0** and **24**.
+- On both jobs: `npm run typecheck`, `npm run build`, `npm test`, committed-`lib/` verification, and package-content verification passed.
+- Final test result: **35 passed, 0 failed, 0 skipped**.
+- The default reminder regression crosses the former three-reminder hard cap in one disclosure interval and observes carriers at cumulative top-level call counts **8, 24, 56, 120, 184, and 248**.
+- A separate pure-policy regression verifies that an overdue reminder does not advance backoff until it is actually delivered; the next interval anchors from the actual delivery call rather than the earliest due call.
+- Configuration regressions cover explicit `null`, invalid/unsafe integers, `maxReminderIntervalCalls < reminderAfterCalls`, `reminderAfterCalls: 0` as the reminder-disable switch, and a capped interval that continues delivering indefinitely.
+- Existing native-main-agent scoping, checkpoint-step sibling accounting, one-reminder-per-model-step fencing, activity-window behavior, downstream error composition, and structured progress semantics remain covered.
+- This CI validates policy/adapter behavior, generated build output, and package shape; no controlled routed-model or Web-profile run was added for the new long-run cadence.
+
 ## Native main-agent scope: current checkout (2026-09-26)
 
 Verified PR #5 / `fix/native-root-only-disclosure`, with package version still `0.4.1` (unreleased changes).

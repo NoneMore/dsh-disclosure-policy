@@ -45,11 +45,11 @@ export interface Config {
    */
   reminderAfterCalls?: number
   /**
-   * Reminder budget for one disclosure interval: at most this many notices, one
-   * every `reminderAfterCalls` completed top-level calls. `1` restores a
-   * one-shot reminder; `0` disables runtime reminders. Default 3.
+   * Maximum spacing between repeat reminders after exponential backoff.
+   * Must be at least `reminderAfterCalls` when reminders are enabled.
+   * Default 64.
    */
-  maxReminders?: number
+  maxReminderIntervalCalls?: number
   /** Recent operations retained for an eligible native root; 0 disables hints alone. Default 16. */
   activityWindowSize?: number
   /** Minimum inspections in the activity window, independent of cadence. Default 8. */
@@ -58,7 +58,7 @@ export interface Config {
 
 export const Config: z<Config> = z.object({
   reminderAfterCalls: z.number().step(1).min(0).default(DEFAULT_CONFIG.reminderAfterCalls),
-  maxReminders: z.number().step(1).min(0).default(DEFAULT_CONFIG.maxReminders),
+  maxReminderIntervalCalls: z.number().step(1).min(1).default(DEFAULT_CONFIG.maxReminderIntervalCalls),
   activityWindowSize: z.number().step(1).min(0).default(DEFAULT_CONFIG.activityWindowSize),
   inspectionHintMinInspections: z.number().step(1).min(1).default(DEFAULT_CONFIG.inspectionHintMinInspections),
 })
@@ -179,7 +179,7 @@ function installForAgent(
       recordActivity(current.activity, classifyToolActivity(exec.name))
       const nested = exec.parent !== undefined
       if (!nested) current.stepTopLevelCalls += 1
-      return countCompletedCall(current.silence, config.reminderAfterCalls, config.maxReminders, {
+      return countCompletedCall(current.silence, config.reminderAfterCalls, config.maxReminderIntervalCalls, {
         nested,
       })
     }

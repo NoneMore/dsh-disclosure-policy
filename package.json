@@ -1,7 +1,7 @@
 {
   "name": "dsh-disclosure-policy",
   "version": "0.4.1",
-  "description": "Add a compact structured progress tool and bounded reminders for long DeepSeek Harness turns.",
+  "description": "Add a compact structured progress tool and rate-bounded reminders for long DeepSeek Harness turns.",
   "type": "module",
   "main": "./lib/index.js",
   "types": "./lib/index.d.ts",

@@ -1,6 +1,6 @@
-# Design — structured progress primitive, bounded reminders
+# Design — structured progress primitive, bounded-rate reminders
 
-Design updated: 2026-09-26 (ADR-0007).
+Design updated: 2026-09-26 (ADR-0007, ADR-0009).
 
 ## Goal
 
@@ -102,7 +102,7 @@ Each active turn owns one record:
 interface IntervalState {
   silence: {
     calls: number
-    firstReminderAt: number | null
+    lastReminderAt: number | null
     delivered: number
   }
   activity: ActivityState
@@ -131,11 +131,13 @@ Same-step work is not a checkpoint exemption. `stepTopLevelCalls` records comple
 
 `countCompletedCall()` counts top-level ordinary calls. The pure helper retains its nested-call option for API compatibility, but the host policy is not installed in PTC/both scopes.
 
-The first reminder is due at `reminderAfterCalls`. Later reminders are spaced by the same amount from the first delivered reminder, until `maxReminders` is spent.
+The first reminder is due at `reminderAfterCalls`. Each delivered repeat doubles the spacing from the previous delivered reminder until `maxReminderIntervalCalls` is reached; later repeats keep that capped spacing. With defaults, reminder carriers occur at cumulative call counts 8, 24, 56, 120, 184, 248, and so on.
+
+There is no total reminder budget. The bound is on reminder **rate**, not reminder **count**, so an indefinitely silent model cannot permanently outwait the policy.
 
 A reminder itself never resets the interval. Only a successful progress-tool invocation does.
 
-A downstream post-execute exception advances cadence but cannot carry `additionalContexts`, so it does not spend the reminder slot. The pending reminder can be attached at the next deliverable boundary.
+A downstream post-execute exception advances cadence but cannot carry `additionalContexts`, so it does not advance the delivered/backoff state. The overdue reminder can be attached at the next deliverable boundary and the next backoff interval anchors from that actual delivery.
 
 ## One reminder per model step
 
@@ -143,7 +145,7 @@ Counting calls alone is insufficient when one model step emits a large parallel 
 
 The adapter therefore remembers the current `assistant/message.data.step` and the step that already received a reminder.
 
-If another call in the same step is also overdue, the call count still advances, but the extra reminder is withheld and its budget slot is not spent. On a later model step, the next overdue reminder may be delivered immediately.
+If another call in the same step is also overdue, the call count still advances, but the extra reminder is withheld and the backoff state does not advance. On a later model step, the overdue reminder may be delivered immediately.
 
 This preserves the intended feedback loop:
 

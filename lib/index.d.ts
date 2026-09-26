@@ -18,11 +18,11 @@ export interface Config {
      */
     reminderAfterCalls?: number;
     /**
-     * Reminder budget for one disclosure interval: at most this many notices, one
-     * every `reminderAfterCalls` completed top-level calls. `1` restores a
-     * one-shot reminder; `0` disables runtime reminders. Default 3.
+     * Maximum spacing between repeat reminders after exponential backoff.
+     * Must be at least `reminderAfterCalls` when reminders are enabled.
+     * Default 64.
      */
-    maxReminders?: number;
+    maxReminderIntervalCalls?: number;
     /** Recent operations retained for an eligible native root; 0 disables hints alone. Default 16. */
     activityWindowSize?: number;
     /** Minimum inspections in the activity window, independent of cadence. Default 8. */

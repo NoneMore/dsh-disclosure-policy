@@ -48,7 +48,7 @@ The tool exists only in exact-native runtime roots. PTC/both Agents and runtime 
 Each eligible Agent scope owns one turn-local `IntervalState`, initialized on its `turn/start` and cleared on `turn/end`.
 
 State contains:
-- disclosure cadence/budget counters;
+- disclosure cadence/backoff counters;
 - the rolling activity window;
 - current Assistant `step`;
 - completed top-level ordinary calls observed in the current step;
@@ -74,13 +74,15 @@ For ordinary tools, `tools/post-execute`:
 3. advances cadence only for top-level calls;
 4. if a reminder is due and the current model step has not already received one, prepends one plugin-sourced notice to `additionalContexts`.
 
-A downstream exception still advances activity/cadence but cannot spend a reminder slot because there is no returned decision to carry context.
+A downstream exception still advances activity/cadence but cannot advance delivered/backoff state because there is no returned decision to carry context.
+
+The first reminder uses `reminderAfterCalls`. Repeat intervals then double after each delivered reminder until `maxReminderIntervalCalls` is reached. With defaults the spacings are 8, 16, 32, 64, 64, ... calls. There is no total reminder cap; a successful `disclose_progress` resets the backoff to its initial interval.
 
 ## 6. Parallel-step bound
 
 One Assistant response can dispatch many top-level calls in parallel. Call count alone can cross multiple cadence periods before any next model request exists.
 
-The plugin therefore uses `assistant/message.data.step` as a delivery fence. Once one call in a model step carries a reminder, later overdue calls in that same step advance counters but do not spend another reminder slot.
+The plugin therefore uses `assistant/message.data.step` as a delivery fence. Once one call in a model step carries a reminder, later overdue calls in that same step advance call counters but do not advance reminder/backoff state.
 
 After the next Assistant message changes `step`, an overdue reminder can be delivered immediately. If that committed message contains a direct progress call, same-step reminder delivery is held until the attempt resolves, preventing a stale notice from racing a successful checkpoint.
 

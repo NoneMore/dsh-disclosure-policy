@@ -3,6 +3,6 @@
       name: dsh-disclosure-policy
       config:
         reminderAfterCalls: 8
-        maxReminders: 3
+        maxReminderIntervalCalls: 64
         activityWindowSize: 16
         inspectionHintMinInspections: 8

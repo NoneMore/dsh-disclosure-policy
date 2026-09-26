@@ -28,10 +28,10 @@ export interface DisclosureConfig {
      */
     reminderAfterCalls: number;
     /**
-     * Reminder budget for one disclosure interval. `1` is a one-shot reminder;
-     * `0` disables reminders.
+     * Maximum spacing between repeat reminders after exponential backoff.
+     * Must be at least `reminderAfterCalls` when reminders are enabled.
      */
-    maxReminders: number;
+    maxReminderIntervalCalls: number;
     /** Recent observed operations retained for activity hints; 0 disables hints alone. */
     activityWindowSize: number;
     /** Minimum inspections in the activity window, independent of reminder cadence. */
@@ -88,22 +88,18 @@ export declare function isModelDisclosure(message: MessageLike): boolean;
 export interface SilenceState {
     /** Completed top-level work calls since the interval opened. */
     calls: number;
-    /** Call count where this interval's first reminder was actually delivered. */
-    firstReminderAt: number | null;
-    /** Reminders delivered in this interval, and the budget index of the next one. */
+    /** Call count where the latest reminder was actually delivered. */
+    lastReminderAt: number | null;
+    /** Reminders delivered in this interval; also the backoff index of the next one. */
     delivered: number;
 }
 export declare function createSilence(): SilenceState;
 /** Open a new reminder interval in place. */
 export declare function resetSilence(state: SilenceState): SilenceState;
-/**
- * Count one completed top-level work call and report which reminder it carries.
- * Nested calls inside a composite tool do not advance cadence.
- */
-export declare function countCompletedCall(state: SilenceState, reminderAfterCalls: number, maxReminders: number, options?: {
+export declare function countCompletedCall(state: SilenceState, reminderAfterCalls: number, maxReminderIntervalCalls: number, options?: {
     readonly nested?: boolean;
 }): number | null;
-/** Record that a reminder was actually delivered. */
+/** Record that a reminder was actually delivered and anchor the next backoff interval. */
 export declare function markReminderDelivered(state: SilenceState, calls: number, index: number): void;
 export interface ReminderCarrier<TNotice> {
     readonly kind: string;

@@ -19,7 +19,7 @@ Codex's public prompt uses meaningful work transitions rather than “every N to
 - one compact always-available progress primitive whose description carries the semantic obligation;
 - a soft N-call reminder.
 
-The numeric threshold is a safety net, not the desired cadence. v0.2 added a third stage — a hard checkpoint that denied the next tool call — and v0.3 removed it: enforcement corrects the model's style, while the actual failure is the supervisor's blindness, and a denial does not cure blindness (ADR-0001). v0.4 also replaced the one-shot reminder latch with a bounded cadence: a single ignored reminder left the rest of the interval silent, which is the one situation the reminder exists for. The safety net now repeats up to `maxReminders` times, and after that it still stops — repeating a nudge indefinitely is how a liveness check turns into noise (§9).
+The numeric threshold is a safety net, not the desired cadence. v0.2 added a third stage — a hard checkpoint that denied the next tool call — and v0.3 removed it: enforcement corrects the model's style, while the actual failure is the supervisor's blindness, and a denial does not cure blindness (ADR-0001). v0.4 replaced the one-shot reminder latch with repeated reminders, but its fixed total budget still let a sufficiently long silent stretch become permanently quiet. The current policy instead bounds reminder **rate**: spacing backs off exponentially to a configured maximum interval and then stays there. This avoids fixed-frequency chatter without giving silence a terminal escape hatch (§9).
 
 ## 3. Use an explicit progress primitive when the host lacks phase semantics
 
@@ -52,13 +52,13 @@ Current official guidance maps cleanly:
 - `ctx.tools.guard()`: final monotonic hard invariant — not used here;
 - `agent/turn-stopping`: bounded objection before close — not needed here.
 
-`dsh-disclosure-policy` uses the first three only. It installs no standing prompt section, no guard, and no stop steering.
+`dsh-disclosure-policy` uses the structured tool, Agent-scoped `session/event` / `tools/post-execute`, and one host-global `agent/created` discovery listener. It installs no standing prompt section, no guard, and no stop steering.
 
 Do not poll deprecated Session history readers for live state.
 
 ## 6. Keep optional services optional
 
-Cordis `inject` is a hard dependency. The current plugin requires only `tools`; it no longer depends on `systemPrompt`. Avoid ad-hoc “required/optional inject object” conventions unless the current framework documentation explicitly supports them.
+Cordis `inject` is a hard dependency. The current plugin requires `tools` and `agents`; it no longer depends on `systemPrompt`. Avoid ad-hoc “required/optional inject object” conventions unless the current framework documentation explicitly supports them.
 
 ## 7. Steering has lifecycle limits
 
@@ -117,9 +117,9 @@ to derive them from durable events and accept the misclassification risk.
 Two smaller, sharper steps are now visible from the shipped behavior rather than from theory:
 
 - **Close the cross-turn gap.** Intervals are turn-local, so a model that keeps opening fresh turns
-  resets its own budget and can stay effectively silent without ever hitting the cadence. This is the
+  resets its own backoff state and can stay effectively silent without ever reaching the long-interval cadence. This is the
   remaining structural hole in the reminder lane.
-- **Make the cadence observable to the supervisor.** The counter and the spent budget are plugin-local;
+- **Make the cadence observable to the supervisor.** The counter and current backoff state are plugin-local;
   a thin client projection would let the supervisor see staleness without waiting for model prose. That
   is also the only mechanism that does not depend on the model cooperating.
 
