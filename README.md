@@ -30,7 +30,7 @@ The redesign is intentionally **replacement, not accumulation**:
 
 - no standing disclosure section is added to the system prompt;
 - one compact tool description is added;
-- the tool has only three required string fields: `done`, `next`, `approach`;
+- the tool has only three required string fields: `done`, `next`, `approach`; the body rejects whitespace-only values without adding schema text;
 - those fields have no per-parameter descriptions;
 - successful tool output is canonical `null` and renders **no model-facing result text**, so the checkpoint is not echoed back into context;
 - the checkpoint explicitly opts into parallel scheduling; DSH otherwise treats an unspecified concurrency classifier as an exclusive barrier;
@@ -59,7 +59,7 @@ Each turn starts a disclosure interval. Completed **top-level non-disclosure** t
 - nested ordinary tools do not advance cadence;
 - one Assistant step can receive at most **one** reminder, even if a large parallel fan-out crosses several cadence periods.
 
-A due reminder is attached through `tools/post-execute -> additionalContexts` and is seen on the next model step. It asks the model to call `disclose_progress` and then continue unless blocked.
+A due reminder is attached through `tools/post-execute -> additionalContexts` and is seen on the next model step. It asks for a brief `disclose_progress` checkpoint and, when work remains, tells the model to batch it with the next work tool(s).
 
 A successful `disclose_progress` call resets call count, cadence anchor, and reminder budget. Recent activity is preserved. The entire Assistant step containing that successful checkpoint is treated as the boundary, so parallel sibling tools cannot be counted differently merely because they settle before or after the progress call.
 
