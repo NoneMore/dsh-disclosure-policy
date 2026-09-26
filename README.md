@@ -33,12 +33,14 @@ The redesign is intentionally **replacement, not accumulation**:
 - the tool has only three required string fields: `done`, `next`, `approach`;
 - those fields have no per-parameter descriptions;
 - successful tool output is canonical `null` and renders **no model-facing result text**, so the checkpoint is not echoed back into context;
+- the checkpoint explicitly opts into parallel scheduling; DSH otherwise treats an unspecified concurrency classifier as an exclusive barrier;
+- when work remains, the model is told to batch the checkpoint with the next work tool(s), avoiding a dedicated extra model step in the common case;
 - reminders are one short sentence and contain no four-line template;
 - the optional activity suffix is a single compact factual sentence.
 
 Tests enforce size ceilings for the fixed model-facing declaration/reminder text and inspect the registered schema so accidental prompt growth fails CI.
 
-`deferLoading` is deliberately not used. Current DSH keeps explicitly deferred baseline tools inactive until a retained addition activates them, while PTC still carries generated-SDK cost. This progress primitive needs to be reliably available from the start.
+`deferLoading` is deliberately not used. Current DSH keeps explicitly deferred baseline tools inactive until a retained addition activates them; unsupported routes may still receive active declarations, and PTC still carries generated-SDK cost. Dynamic registration would also add tool-update/history churn. The fixed schema is intentionally tiny and reliably available from the start.
 
 ## Native and PTC modes
 
