@@ -16,12 +16,12 @@ try {
 
 const skip = unavailable === undefined ? false : unavailable
 
-function createHarness({ mode = 'native', root = true } = {}) {
+function createHarness({ mode = 'native', root = true, sessionHeader = {} } = {}) {
   const globalListeners = new Map()
   const scopedListeners = new Map()
   const guards = []
   const tools = new Map()
-  let currentSession = { id: 'unbound' }
+  let currentSession = { id: 'unbound', header: sessionHeader }
   let rootEnabled = root
 
   const addListener = (map, name, listener) => {
@@ -203,6 +203,16 @@ test('the disclosure surface is installed only for exact native runtime roots', 
   child.announce()
   assert.deepEqual([...child.tools.keys()], [], 'runtime child has no disclosure tool')
   assert.deepEqual(child.eventNames(), ['agent/created'])
+
+  for (const sessionHeader of [
+    { origin: 'subagent', delegationDepth: 0 },
+    { delegationDepth: 1 },
+  ]) {
+    const resumedSubagent = createHarness({ sessionHeader })
+    host.apply(resumedSubagent.ctx)
+    assert.deepEqual([...resumedSubagent.tools.keys()], [], 'persisted subagent root has no disclosure tool')
+    assert.deepEqual(resumedSubagent.eventNames(), ['agent/created'])
+  }
 
   const futureRoot = createHarness({ root: false })
   host.apply(futureRoot.ctx)
