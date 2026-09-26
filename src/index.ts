@@ -59,6 +59,8 @@ interface IntervalState {
   activity: ActivityState
   step: number | null
   remindedStep: number | null
+  pendingDisclosureStep: number | null
+  disclosedStep: number | null
 }
 
 const SOURCE = {
@@ -98,11 +100,19 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
           activity: createActivity(config.activityWindowSize),
           step: null,
           remindedStep: null,
+          pendingDisclosureStep: null,
+          disclosedStep: null,
         })
         return
       case 'assistant/message': {
         const interval = intervals.get(session)
-        if (interval !== undefined) interval.step = event.data.step
+        if (interval === undefined) return
+        interval.step = event.data.step
+        interval.remindedStep = interval.remindedStep === event.data.step ? interval.remindedStep : null
+        interval.disclosedStep = null
+        interval.pendingDisclosureStep = event.data.message.content.some(
+          block => block.type === 'tool-call' && block.name === DISCLOSURE_TOOL_NAME,
+        ) ? event.data.step : null
         return
       }
       case 'turn/end':
@@ -132,6 +142,8 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
       if (interval !== undefined) {
         resetSilence(interval.silence)
         interval.remindedStep = null
+        interval.pendingDisclosureStep = null
+        interval.disclosedStep = interval.step
       }
       return null
     },
@@ -147,6 +159,12 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
     const observe = (): number | null => {
       if (interval === undefined) return null
       recordActivity(interval.activity, classifyToolActivity(exec.name))
+      // A successful checkpoint makes its whole Assistant step the boundary.
+      // Sibling top-level calls settling after it are therefore not charged to
+      // the fresh interval. Nested ordinary calls never advance cadence anyway.
+      if (interval.step !== null && interval.disclosedStep === interval.step && exec.parent === undefined) {
+        return null
+      }
       return countCompletedCall(interval.silence, config.reminderAfterCalls, config.maxReminders, {
         nested: exec.parent !== undefined,
       })
@@ -163,6 +181,12 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
     if (interval === undefined) return downstream
     const index = observe()
     if (index === null) return downstream
+
+    // A direct progress tool call is known from the committed Assistant message
+    // before dispatch. Delay any due reminder until that attempt settles: success
+    // resets the interval, while failure leaves the overdue reminder for the next
+    // model step. This prevents a stale reminder racing a parallel checkpoint.
+    if (interval.step !== null && interval.pendingDisclosureStep === interval.step) return downstream
 
     // Parallel top-level calls from one Assistant step may cross several cadence
     // periods. Deliver at most one notice for that step; overdue budget remains
