@@ -430,7 +430,7 @@ test('a progress checkpoint preserves recent native activity but is excluded fro
   harness.emit(session, TURN.start(1))
 
   for (let i = 0; i < 2; i += 1) {
-    await harness.postExecute(session, { kind: 'accept' }, { name: 'read', parent })
+    await harness.postExecute(session, { kind: 'accept' }, { name: 'read' })
   }
   await disclose(harness, session, {
     done: 'Compared records.',
