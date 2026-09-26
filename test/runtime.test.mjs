@@ -527,7 +527,7 @@ test('failed, denied, and blocked ordinary outcomes still advance cadence', { sk
   assertNoticeShape(await harness.postExecute(session, { kind: 'block', feedback: [] }, {}, { result: failed }), 0)
 })
 
-test('a throwing downstream policy advances cadence but does not spend the reminder slot', { skip }, async () => {
+test('a throwing downstream policy advances cadence without advancing delivered backoff', { skip }, async () => {
   const harness = createHarness()
   const session = { id: 'throwing-policy' }
   host.apply(harness.ctx, { reminderAfterCalls: 2, maxReminderIntervalCalls: 2, activityWindowSize: 0 })
