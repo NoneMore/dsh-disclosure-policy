@@ -17,9 +17,14 @@ export const DISCLOSURE_TOOL_NAME = 'disclose_progress'
  * it is present in every request that exposes the tool.
  */
 export const DISCLOSURE_TOOL_DESCRIPTION =
-  'Report material progress: done, next, and approach; continue unless blocked. Use after findings or verification.'
+  'Checkpoint long autonomous work: report done, next, and approach; then continue unless blocked.'
 
-/** Legacy export retained for callers; no separate prompt section is installed. */
+/**
+ * Historical prompt exports remain for policy-API compatibility. The host plugin
+ * no longer mounts this section, so they add zero model-context cost.
+ */
+export const DISCLOSURE_POLICY_ORDER = 10150
+export const DISCLOSURE_POLICY_SECTION_NAME = 'plugin:disclosure-policy:policy'
 export const DISCLOSURE_POLICY_TEXT = DISCLOSURE_TOOL_DESCRIPTION
 
 export interface DisclosureConfig {
