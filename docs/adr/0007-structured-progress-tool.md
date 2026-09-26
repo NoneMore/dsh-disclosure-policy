@@ -38,11 +38,16 @@ One turn-local interval stores:
 - completed top-level non-disclosure calls;
 - reminder cadence/budget state;
 - the rolling activity window;
-- the current Assistant step and the step that already received a reminder.
+- the current Assistant step;
+- the step that already received a reminder;
+- a direct progress attempt known from that Assistant message; and
+- the step whose progress call successfully executed.
 
 `disclose_progress` resets only reminder accounting. It does not enter the activity window and does not itself advance cadence. Recent activity remains available across checkpoints.
 
-Nested ordinary tool calls still affect activity but not cadence. A nested `disclose_progress` call resets the interval, so PTC mode has the same semantic behavior as native mode.
+A successful checkpoint makes its **whole Assistant step** the interval boundary. Native sibling calls and a PTC enclosing `run_code` are not charged to the fresh interval even if they settle after the progress call. This makes semantics independent of parallel settlement order.
+
+For a direct native progress call, the committed Assistant message identifies the pending tool call before dispatch. Due reminders are withheld for that step until the attempt settles: success resets accounting; failure leaves the overdue reminder available on the next model step. This prevents a stale reminder from racing a parallel progress attempt.
 
 ## Parallel-step bound
 
