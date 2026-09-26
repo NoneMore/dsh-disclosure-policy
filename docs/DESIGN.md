@@ -60,7 +60,7 @@ parameters:
 
 There is no separate system-prompt section.
 
-Parameter descriptions are omitted because the field names plus the one-line tool description are sufficient. Successful canonical output is `null`; the Native renderer emits no content blocks. The tool therefore does not repeat the checkpoint back into the model's next request.
+Parameter descriptions are omitted because the field names plus the one-line tool description are sufficient. The executor rejects whitespace-only fields before resetting accounting, so empty check-ins do not buy a fresh interval without expanding the schema. Successful canonical output is `null`; the Native renderer emits no content blocks. The tool therefore does not repeat the checkpoint back into the model's next request.
 
 The ordinary reminder is likewise compact and names the tool rather than restating its schema.
 
