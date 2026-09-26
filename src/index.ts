@@ -212,7 +212,12 @@ function installForAgent(
   })
 }
 
-/** Whether this live agent should receive the disclosure surface. */
+/**
+ * Whether this Agent is a main native root.
+ *
+ * Live ownership excludes currently attached children; durable header markers
+ * keep cold-resumed subagent sessions excluded after their former parent is gone.
+ */
 function isEligibleAgent(ctx: Context, agent: Agent): boolean {
   if (!ctx.agents.roots().includes(agent)) return false
   const { origin, delegationDepth } = agent.session.header
