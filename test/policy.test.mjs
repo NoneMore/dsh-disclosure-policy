@@ -184,6 +184,22 @@ test('a capped backoff can stay frequent without ever exhausting', () => {
   assert.equal(state.delivered, 5)
 })
 
+test('backoff anchors from actual delivery rather than the first overdue call', () => {
+  const state = createSilence()
+
+  assert.equal(countCompletedCall(state, 2, 8), null)
+  for (let call = 2; call <= 5; call += 1) {
+    assert.equal(countCompletedCall(state, 2, 8), 0, 'first reminder stays overdue until delivered')
+  }
+  markReminderDelivered(state, state.calls, 0)
+  assert.deepEqual(state, { calls: 5, lastReminderAt: 5, delivered: 1 })
+
+  for (let call = 6; call <= 8; call += 1) {
+    assert.equal(countCompletedCall(state, 2, 8), null)
+  }
+  assert.equal(countCompletedCall(state, 2, 8), 1, 'second interval is four calls after actual delivery')
+})
+
 test('reminder text composes activity and repeat facts without publishing counters', () => {
   const fact = 'Observed activity fact.'
   assert.equal(reminderTextFor(0, fact), `${DISCLOSURE_REMINDER_TEXT} ${fact}`)
