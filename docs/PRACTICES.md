@@ -52,13 +52,13 @@ Current official guidance maps cleanly:
 - `ctx.tools.guard()`: final monotonic hard invariant — not used here;
 - `agent/turn-stopping`: bounded objection before close — not needed here.
 
-`dsh-disclosure-policy` uses the first three only. It installs no standing prompt section, no guard, and no stop steering.
+`dsh-disclosure-policy` uses the structured tool, Agent-scoped `session/event` / `tools/post-execute`, and one host-global `agent/created` discovery listener. It installs no standing prompt section, no guard, and no stop steering.
 
 Do not poll deprecated Session history readers for live state.
 
 ## 6. Keep optional services optional
 
-Cordis `inject` is a hard dependency. The current plugin requires only `tools`; it no longer depends on `systemPrompt`. Avoid ad-hoc “required/optional inject object” conventions unless the current framework documentation explicitly supports them.
+Cordis `inject` is a hard dependency. The current plugin requires `tools` and `agents`; it no longer depends on `systemPrompt`. Avoid ad-hoc “required/optional inject object” conventions unless the current framework documentation explicitly supports them.
 
 ## 7. Steering has lifecycle limits
 
