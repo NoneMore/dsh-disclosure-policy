@@ -20,14 +20,40 @@ standing disclosure policy ......... systemPrompt.section(order 10150)
 visible assistant/message text ...... opens a new silence interval
         |
         v
-completed top-level tool calls ...... advance the interval
+completed top-level tool calls ...... advance the silence interval
         |
+        +---- all completed tools ..... update coarse activity shape
+        |                              (nested native calls included)
         v
 tools/post-execute .................. one reminder per cadence period,
+                                     optionally with objective activity context,
                                      up to maxReminders per interval
 ```
 
 There is no second lane and no hard checkpoint. Native task accounting (`todo_write`) is a different concern owned by a different plugin; this one neither reads nor writes it.
+## Activity context: facts, not productivity judgments
+
+The runtime now keeps a second, ephemeral projection over the same visible-text interval: completed
+tool operations are classified from their structured names as `inspect`, `mutate`, `verify`, or
+`other`. This projection deliberately has different accounting from silence:
+
+- **silence** counts completed top-level calls, because a composite tool is still one opportunity for
+  the routed model to speak;
+- **activity** counts nested native calls too, because otherwise one composite dispatch could hide a
+  large inspection/search stretch;
+- generic shells and composite transports remain `other`; the policy does not parse arbitrary
+  command text or infer effects from it.
+
+The activity projection does not create its own reminder schedule. When the ordinary silence reminder
+is already due, an interval with at least `reminderAfterCalls` inspection/search operations and no
+mutation- or verification-oriented operation gets one factual suffix. The suffix reports the observed
+tool mix and asks which unresolved fact would justify more investigation. It does not say the model is
+stuck, overthinking, or unproductive.
+
+This refines ADR-0003's distinction rather than replacing it: runtime facts may contextualize a request
+for **model-authored disclosure**, but the plugin still does not present those facts as the disclosure
+itself or synthesize a semantic progress report.
+
 ## Event ordering used by the design
 
 DSH commits `assistant/message` before dispatching the tool calls that message requested. The plugin observes the committed message through `session/event`, so visible text in a response and the tool calls of that same response compose cleanly:

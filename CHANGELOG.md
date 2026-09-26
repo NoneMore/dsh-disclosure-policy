@@ -1,5 +1,10 @@
 # Changelog
 
+## Unreleased
+
+- Add coarse activity-shape accounting alongside silence accounting. Nested native calls contribute activity even though they still do not advance the top-level silence cadence.
+- When a normal disclosure reminder is due after an inspection-only stretch, append an objective fact about the observed tool mix and ask which unresolved fact would justify further investigation. The hint does not add a new reminder cadence, parse shell commands, deny tools, or judge productivity.
+
 ## 0.4.1 - 2026-09-24
 
 - Adapt to DeepSeek Harness 0.1.7-rc.1.

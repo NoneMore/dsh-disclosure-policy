@@ -41,6 +41,78 @@ export const DEFAULT_CONFIG: Readonly<DisclosureConfig> = Object.freeze({
   maxReminders: 3,
 })
 
+export type ActivityKind = 'inspect' | 'mutate' | 'verify' | 'other'
+
+export interface ActivityState {
+  inspect: number
+  mutate: number
+  verify: number
+  other: number
+}
+
+const OPEN_ACTIVITY = Object.freeze({ inspect: 0, mutate: 0, verify: 0, other: 0 })
+
+const INSPECT_TOKENS = new Set([
+  'browse', 'diff', 'fetch', 'find', 'glob', 'grep', 'inspect', 'list', 'log', 'open', 'read', 'search', 'show', 'status',
+])
+const MUTATE_TOKENS = new Set([
+  'apply', 'copy', 'create', 'delete', 'edit', 'mkdir', 'move', 'patch', 'remove', 'rename', 'touch', 'update', 'write',
+])
+const VERIFY_TOKENS = new Set([
+  'acceptance', 'benchmark', 'build', 'check', 'lint', 'pytest', 'test', 'typecheck', 'validate', 'validation', 'verify',
+])
+
+/** Coarse activity counters for one visible-text interval. */
+export function createActivity(): ActivityState {
+  return { ...OPEN_ACTIVITY }
+}
+
+/** Visible model text opens a new activity interval alongside the silence interval. */
+export function resetActivity(state: ActivityState): ActivityState {
+  Object.assign(state, OPEN_ACTIVITY)
+  return state
+}
+
+/**
+ * Classify one tool by its structured name only.
+ *
+ * This intentionally stays conservative: generic shells and composite transports
+ * are `other`; their nested native tools can still contribute their own activity.
+ */
+export function classifyToolActivity(toolName: string): ActivityKind {
+  const tokens = toolName.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean)
+  if (tokens.some(token => VERIFY_TOKENS.has(token))) return 'verify'
+  if (tokens.some(token => MUTATE_TOKENS.has(token))) return 'mutate'
+  if (tokens.some(token => INSPECT_TOKENS.has(token))) return 'inspect'
+  return 'other'
+}
+
+/** Count one completed tool operation in the current activity interval. */
+export function recordActivity(state: ActivityState, kind: ActivityKind): ActivityState {
+  state[kind] += 1
+  return state
+}
+
+/**
+ * Objective context for an inspection-only stretch, or `null` when the shape
+ * is not notable enough to add to the normal disclosure reminder.
+ *
+ * The fact does not say the work is excessive or unproductive. It only reports
+ * the observed tool mix and asks the model to name the unresolved fact that
+ * justifies more investigation.
+ */
+export function inspectionActivityFact(state: ActivityState, minimumInspections: number): string | null {
+  if (
+    minimumInspections <= 0
+    || state.inspect < minimumInspections
+    || state.mutate !== 0
+    || state.verify !== 0
+  ) {
+    return null
+  }
+  return `This stretch has included ${state.inspect} inspection/search tool operations and no mutation-oriented or verification-oriented tool operations. If more investigation is still needed, identify the unresolved fact it is intended to settle.`
+}
+
 /**
  * Resolve and validate the two behavioral options. The schema in `index.ts`
  * already rejects malformed DSH config rows; this second check keeps the pure
@@ -267,8 +339,9 @@ export const DISCLOSURE_REPEAT_TEXT = 'This is a repeat reminder: no visible dis
  * {@link DISCLOSURE_REMINDER_TEXT} verbatim, and every later one appends
  * {@link DISCLOSURE_REPEAT_TEXT} without changing the request.
  */
-export function reminderTextFor(index: number): string {
-  return index <= 0
-    ? DISCLOSURE_REMINDER_TEXT
-    : `${DISCLOSURE_REMINDER_TEXT} ${DISCLOSURE_REPEAT_TEXT}`
+export function reminderTextFor(index: number, activityFact: string | null = null): string {
+  const parts = [DISCLOSURE_REMINDER_TEXT]
+  if (activityFact !== null) parts.push(activityFact)
+  if (index > 0) parts.push(DISCLOSURE_REPEAT_TEXT)
+  return parts.join(' ')
 }

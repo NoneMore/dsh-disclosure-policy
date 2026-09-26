@@ -4,19 +4,25 @@ import { createUserMessage, type ContextFormed, type UserMessage } from '@deepse
 import type { Session } from '@deepseek-ai/dsh-session'
 import type { PostToolDecision } from '@deepseek-ai/dsh-tools'
 import {
+  classifyToolActivity,
   countCompletedCall,
+  createActivity,
   createSilence,
   DEFAULT_CONFIG,
   DISCLOSURE_PLUGIN_NAME,
   DISCLOSURE_POLICY_ORDER,
   DISCLOSURE_POLICY_SECTION_NAME,
   DISCLOSURE_POLICY_TEXT,
+  inspectionActivityFact,
   isModelDisclosure,
   markReminderDelivered,
+  recordActivity,
   reminderTextFor,
+  resetActivity,
   resetSilence,
   resolveConfig,
   withReminder,
+  type ActivityState,
   type SilenceState,
 } from './policy.js'
 
@@ -54,6 +60,11 @@ export const Config: z<Config> = z.object({
   maxReminders: z.number().step(1).min(0).default(DEFAULT_CONFIG.maxReminders),
 })
 
+interface IntervalState {
+  silence: SilenceState
+  activity: ActivityState
+}
+
 const SOURCE = {
   kind: 'disclosure-policy' as const,
   form: 'notice' as const,
@@ -85,22 +96,25 @@ function notice(text: string): UserMessage {
  */
 export function apply(ctx: Context, rawConfig: Config = {}): void {
   const config = resolveConfig(rawConfig)
-  const silences = new WeakMap<Session, SilenceState>()
+  const intervals = new WeakMap<Session, IntervalState>()
 
   ctx.on('session/event', (session, event) => {
     switch (event.type) {
       case 'turn/start':
-        silences.set(session, createSilence())
+        intervals.set(session, { silence: createSilence(), activity: createActivity() })
         return
       case 'turn/end':
-        silences.delete(session)
+        intervals.delete(session)
         return
       case 'assistant/message': {
-        const state = silences.get(session)
-        if (state === undefined) return
+        const interval = intervals.get(session)
+        if (interval === undefined) return
         // Model-authored visible text opens a new interval. Reasoning blocks
         // and plugin-authored messages are not disclosure and never reset it.
-        if (isModelDisclosure(event.data.message)) resetSilence(state)
+        if (isModelDisclosure(event.data.message)) {
+          resetSilence(interval.silence)
+          resetActivity(interval.activity)
+        }
         return
       }
       default:
@@ -124,30 +138,33 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
   // The soft reminders. They compose with downstream post-execute policy
   // (accept or block) rather than replacing it, and they never deny a call.
   ctx.on('tools/post-execute', async (exec, _result, next): Promise<PostToolDecision> => {
+    const interval = exec.agent === undefined ? undefined : intervals.get(exec.agent.session)
+    const observe = (): number | null => {
+      if (interval === undefined) return null
+      // Activity describes completed tool operations, including nested native
+      // dispatches. Silence cadence still counts top-level calls only.
+      recordActivity(interval.activity, classifyToolActivity(exec.name))
+      return countCompletedCall(interval.silence, config.reminderAfterCalls, config.maxReminders, {
+        nested: exec.parent !== undefined,
+      })
+    }
+
     let downstream: PostToolDecision
     try {
       downstream = await next()
     } catch (error) {
-      const state = exec.agent === undefined ? undefined : silences.get(exec.agent.session)
-      if (state !== undefined) {
-        // This boundary has no decision to carry additional context, so the
-        // call still advances the cadence but cannot spend a budget slot.
-        countCompletedCall(state, config.reminderAfterCalls, config.maxReminders, {
-          nested: exec.parent !== undefined,
-        })
-      }
+      // This boundary has no decision to carry additional context, so the call
+      // still advances both projections but cannot spend a reminder budget slot.
+      observe()
       throw error
     }
 
-    const state = exec.agent === undefined ? undefined : silences.get(exec.agent.session)
-    if (state === undefined) return downstream
-
-    const index = countCompletedCall(state, config.reminderAfterCalls, config.maxReminders, {
-      nested: exec.parent !== undefined,
-    })
+    if (interval === undefined) return downstream
+    const index = observe()
     if (index === null) return downstream
 
-    markReminderDelivered(state, state.calls, index)
-    return withReminder(downstream, notice(reminderTextFor(index)))
+    const activityFact = inspectionActivityFact(interval.activity, config.reminderAfterCalls)
+    markReminderDelivered(interval.silence, interval.silence.calls, index)
+    return withReminder(downstream, notice(reminderTextFor(index, activityFact)))
   })
 }

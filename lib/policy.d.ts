@@ -32,6 +32,35 @@ export interface DisclosureConfig {
     maxReminders: number;
 }
 export declare const DEFAULT_CONFIG: Readonly<DisclosureConfig>;
+export type ActivityKind = 'inspect' | 'mutate' | 'verify' | 'other';
+export interface ActivityState {
+    inspect: number;
+    mutate: number;
+    verify: number;
+    other: number;
+}
+/** Coarse activity counters for one visible-text interval. */
+export declare function createActivity(): ActivityState;
+/** Visible model text opens a new activity interval alongside the silence interval. */
+export declare function resetActivity(state: ActivityState): ActivityState;
+/**
+ * Classify one tool by its structured name only.
+ *
+ * This intentionally stays conservative: generic shells and composite transports
+ * are `other`; their nested native tools can still contribute their own activity.
+ */
+export declare function classifyToolActivity(toolName: string): ActivityKind;
+/** Count one completed tool operation in the current activity interval. */
+export declare function recordActivity(state: ActivityState, kind: ActivityKind): ActivityState;
+/**
+ * Objective context for an inspection-only stretch, or `null` when the shape
+ * is not notable enough to add to the normal disclosure reminder.
+ *
+ * The fact does not say the work is excessive or unproductive. It only reports
+ * the observed tool mix and asks the model to name the unresolved fact that
+ * justifies more investigation.
+ */
+export declare function inspectionActivityFact(state: ActivityState, minimumInspections: number): string | null;
 /**
  * Resolve and validate the two behavioral options. The schema in `index.ts`
  * already rejects malformed DSH config rows; this second check keeps the pure
@@ -157,4 +186,4 @@ export declare const DISCLOSURE_REPEAT_TEXT = "This is a repeat reminder: no vis
  * {@link DISCLOSURE_REMINDER_TEXT} verbatim, and every later one appends
  * {@link DISCLOSURE_REPEAT_TEXT} without changing the request.
  */
-export declare function reminderTextFor(index: number): string;
+export declare function reminderTextFor(index: number, activityFact?: string | null): string;

@@ -5,7 +5,8 @@ Experimental DeepSeek Harness **host-only** plugin for one failure mode: during 
 The plugin supports the human's job during execution — **supervision** — rather than compelling the model:
 
 - a **standing policy** tells the model to keep working autonomously and to disclose briefly when there is material new information;
-- a **bounded soft reminder cadence** nudges the model again while a silence interval keeps producing tool calls, up to a fixed budget per interval.
+- a **bounded soft reminder cadence** nudges the model again while a silence interval keeps producing tool calls, up to a fixed budget per interval;
+- an **activity-shape hint** can add objective context to that reminder when the interval has been dominated by inspection/search tools without any mutation- or verification-oriented tool call.
 
 Disclosure is model-authored and best-effort. The plugin never denies a tool call, never rewrites task state, and never forces another step. See [`docs/adr/0001-supervision-over-enforcement.md`](docs/adr/0001-supervision-over-enforcement.md), [`docs/adr/0003-model-authored-disclosure.md`](docs/adr/0003-model-authored-disclosure.md), and [`docs/adr/0004-bounded-repeat-reminders.md`](docs/adr/0004-bounded-repeat-reminders.md).
 
@@ -42,13 +43,16 @@ The runtime keeps one small state record per silence interval:
 completed top-level calls since visible model text
 call count where the first reminder was delivered
 reminders delivered in this interval
+coarse activity counts: inspect / mutate / verify / other
 ```
 
 Rules:
 
 - `turn/start` initializes the record; `turn/end` discards it.
 - Any `assistant/message` containing non-whitespace visible `text` resets the call count, the first-reminder anchor, and the delivered count, opening a new silence interval. Reasoning blocks, tool results, and plugin-authored messages do not reset it.
-- Each **completed top-level** tool call increments the count, whether it succeeded, failed, was denied by another tool policy, or a downstream post-execute listener threw. If that exception prevents reminder delivery, the call still advances the cadence but does not spend a budget slot, so the reminder stays pending for the next deliverable boundary. Nested calls inside a composite tool (`exec.parent !== undefined`) do not count separately.
+- Each **completed top-level** tool call increments the silence count, whether it succeeded, failed, was denied by another tool policy, or a downstream post-execute listener threw. If that exception prevents reminder delivery, the call still advances the cadence but does not spend a budget slot, so the reminder stays pending for the next deliverable boundary. Nested calls inside a composite tool (`exec.parent !== undefined`) do not count separately for silence.
+- Every completed tool operation, including nested native calls, is also classified from its structured tool name as `inspect`, `mutate`, `verify`, or `other`. Generic shells/composite transports are deliberately `other`; the plugin does not parse arbitrary shell text.
+- When an ordinary reminder is due and the interval has at least `reminderAfterCalls` inspection/search operations but no mutation- or verification-oriented operation, the reminder adds that objective fact and asks the model to name the unresolved fact that would justify more investigation. This does **not** create an extra cadence or label the work as excessive.
 - The first reminder is delivered on the call that reaches `reminderAfterCalls`; each later one is delivered `reminderAfterCalls` calls after that anchor, until `maxReminders` notices have been delivered for the interval. After the budget is spent the interval stays silent until visible model text opens a new one.
 - The plugin appends each notice as one plugin-sourced context through `tools/post-execute` → `additionalContexts`, delivered on the next model step.
 - A parallel step crosses at most one cadence period, so it produces at most one reminder.
@@ -87,7 +91,7 @@ DSH patch rows replace the `config` value rather than deep-merging it. Both conf
 
 ## What this plugin deliberately does not do
 
-It does not generate disclosure from runtime facts, judge whether model prose is informative, discover or validate the execution brief, monitor or enforce `todo_write` freshness, rewrite task state, register `ctx.tools.guard()`, steer from `agent/turn-stopping` or any `session/event` callback, classify semantic runtime events, carry live state in the system prompt, add custom durable events, or ship a client component.
+It does not generate disclosure from runtime facts, judge whether model prose is informative, discover or validate the execution brief, monitor or enforce `todo_write` freshness, rewrite task state, register `ctx.tools.guard()`, steer from `agent/turn-stopping` or any `session/event` callback, infer semantic task progress from tool traffic, carry live state in the system prompt, add custom durable events, or ship a client component. The coarse tool-name activity classes only contextualize a model-authored disclosure request; they are not themselves a progress judgment.
 
 Native task accounting stays separate from disclosure. Installing this plugin changes nothing about the `todo_write` contract.
 
@@ -111,6 +115,7 @@ Replace `web` with your profile name if needed.
 - **Live projection, not history reconstruction.** Current DSH deprecates synchronous `Session.eventAt()`, `snapshotEvents()`, and `ownEvents()` and prohibits new production calls to them. On hot reload mid-turn, no state exists until the next observed `turn/start`, so accounting restarts at the next turn rather than scanning the log.
 - **Boundaries, not interruptions.** Nothing in DSH can inject text while a single long tool call is running. The reminder can only be attached when a call settles, so it lands on the *next* model step.
 - **Counting is a failsafe, not a semantic trigger.** `reminderAfterCalls` is a crude silence measure. The semantic obligation lives in the standing policy.
+- **Activity shape is intentionally coarse.** Classification uses only the structured tool name. Shell commands and unknown/composite tools remain `other`, and the inspection-only suffix reports requested operation types rather than claiming that a file really changed or that a verification really proved anything.
 - **The prompt service is optional.** The plugin hard-injects only `tools` and probes `ctx.get('systemPrompt')`. A deployment that installs a complete replacement system prompt may suppress the section; the reminder still works.
 - **No custom durable event types.** Silence state is plugin-local, because out-of-tree durable-event compatibility has sharp edges; see [`docs/SOURCES.md`](docs/SOURCES.md).
 - **Host-only.** No client bundle is shipped, so there is no UI surface for the silence counter.

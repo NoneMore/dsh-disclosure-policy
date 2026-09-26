@@ -121,7 +121,7 @@ function reminders(decision) {
   return (decision.additionalContexts ?? []).filter(message => message?.source?.kind === 'disclosure-policy')
 }
 
-function assertNoticeShape(decision, index = 0) {
+function assertNoticeShape(decision, index = 0, activityFact = null) {
   const found = reminders(decision)
   assert.equal(found.length, 1)
   const [notice] = found
@@ -130,7 +130,7 @@ function assertNoticeShape(decision, index = 0) {
   assert.equal(notice.source.form, 'notice')
   assert.equal(typeof notice.source.summary, 'string')
   assert.equal(notice.source.summary.length <= 120, true)
-  assert.deepEqual(notice.content, [{ type: 'text', text: reminderTextFor(index) }])
+  assert.deepEqual(notice.content, [{ type: 'text', text: reminderTextFor(index, activityFact) }])
   return notice
 }
 
@@ -196,6 +196,58 @@ test('visible model text re-arms the interval while reasoning and plugin message
   await harness.postExecute(session)
   await harness.postExecute(session)
   assertNoticeShape(await harness.postExecute(session), 0)
+})
+
+
+test('an inspection-only stretch adds objective activity context to the normal reminder', { skip }, async () => {
+  const harness = createHarness()
+  const session = { id: 'session-activity-inspect' }
+  host.apply(harness.ctx, { reminderAfterCalls: 3, maxReminders: 1 })
+  harness.emit(session, TURN.start(1))
+
+  await harness.postExecute(session, { kind: 'accept' }, { name: 'read' })
+  await harness.postExecute(session, { kind: 'accept' }, { name: 'grep' })
+  const fact = 'This stretch has included 3 inspection/search tool operations and no mutation-oriented or verification-oriented tool operations. If more investigation is still needed, identify the unresolved fact it is intended to settle.'
+  assertNoticeShape(
+    await harness.postExecute(session, { kind: 'accept' }, { name: 'search_code' }),
+    0,
+    fact,
+  )
+})
+
+test('nested native inspections enrich activity without advancing the silence cadence', { skip }, async () => {
+  const harness = createHarness()
+  const session = { id: 'session-activity-nested' }
+  host.apply(harness.ctx, { reminderAfterCalls: 2, maxReminders: 1 })
+  harness.emit(session, TURN.start(1))
+
+  for (let call = 0; call < 5; call += 1) {
+    const decision = await harness.postExecute(
+      session,
+      { kind: 'accept' },
+      { name: 'read', parent: Symbol('run_code') },
+    )
+    assert.equal(decision.additionalContexts, undefined)
+  }
+
+  assert.equal((await harness.postExecute(session, { kind: 'accept' }, { name: 'run_code' })).additionalContexts, undefined)
+  const fact = 'This stretch has included 5 inspection/search tool operations and no mutation-oriented or verification-oriented tool operations. If more investigation is still needed, identify the unresolved fact it is intended to settle.'
+  assertNoticeShape(
+    await harness.postExecute(session, { kind: 'accept' }, { name: 'run_code' }),
+    0,
+    fact,
+  )
+})
+
+test('a mutation-oriented operation suppresses the inspection-only activity suffix', { skip }, async () => {
+  const harness = createHarness()
+  const session = { id: 'session-activity-mutate' }
+  host.apply(harness.ctx, { reminderAfterCalls: 3, maxReminders: 1 })
+  harness.emit(session, TURN.start(1))
+
+  await harness.postExecute(session, { kind: 'accept' }, { name: 'read' })
+  await harness.postExecute(session, { kind: 'accept' }, { name: 'edit' })
+  assertNoticeShape(await harness.postExecute(session, { kind: 'accept' }, { name: 'grep' }))
 })
 
 test('nested calls do not count and a parallel step produces at most one notice', { skip }, async () => {

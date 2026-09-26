@@ -1,7 +1,9 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
 import {
+  classifyToolActivity,
   countCompletedCall,
+  createActivity,
   createSilence,
   DEFAULT_CONFIG,
   DISCLOSURE_PLUGIN_NAME,
@@ -11,9 +13,12 @@ import {
   DISCLOSURE_REMINDER_TEXT,
   DISCLOSURE_REPEAT_TEXT,
   hasVisibleText,
+  inspectionActivityFact,
   isModelDisclosure,
   markReminderDelivered,
   reminderTextFor,
+  recordActivity,
+  resetActivity,
   resetSilence,
   resolveConfig,
   withReminder,
@@ -32,6 +37,48 @@ test('a non-integer or negative option fails closed', () => {
     assert.throws(() => resolveConfig({ reminderAfterCalls: invalid }), /reminderAfterCalls/)
     assert.throws(() => resolveConfig({ maxReminders: invalid }), /maxReminders/)
   }
+})
+
+
+test('tool activity classification is coarse and conservative', () => {
+  for (const name of ['read', 'read_file', 'grep', 'search_code', 'git_diff']) {
+    assert.equal(classifyToolActivity(name), 'inspect', name)
+  }
+  for (const name of ['edit', 'apply_patch', 'update_file', 'create_blob']) {
+    assert.equal(classifyToolActivity(name), 'mutate', name)
+  }
+  for (const name of ['pytest', 'npm_test', 'typecheck', 'acceptance_check']) {
+    assert.equal(classifyToolActivity(name), 'verify', name)
+  }
+  for (const name of ['bash', 'run_code', 'shell']) {
+    assert.equal(classifyToolActivity(name), 'other', name)
+  }
+})
+
+test('inspection-only activity yields an objective reminder fact at the configured scale', () => {
+  const activity = createActivity()
+  for (let i = 0; i < 8; i += 1) recordActivity(activity, 'inspect')
+
+  const fact = inspectionActivityFact(activity, 8)
+  assert.match(fact, /8 inspection\/search tool operations/)
+  assert.match(fact, /no mutation-oriented or verification-oriented/)
+  assert.match(fact, /unresolved fact/)
+
+  recordActivity(activity, 'mutate')
+  assert.equal(inspectionActivityFact(activity, 8), null)
+
+  resetActivity(activity)
+  for (let i = 0; i < 7; i += 1) recordActivity(activity, 'inspect')
+  assert.equal(inspectionActivityFact(activity, 8), null)
+})
+
+test('an activity fact contextualizes the reminder without changing the base cadence text', () => {
+  const fact = 'Observed activity fact.'
+  assert.equal(reminderTextFor(0, fact), `${DISCLOSURE_REMINDER_TEXT} ${fact}`)
+  assert.equal(
+    reminderTextFor(1, fact),
+    `${DISCLOSURE_REMINDER_TEXT} ${fact} ${DISCLOSURE_REPEAT_TEXT}`,
+  )
 })
 
 test('visible text excludes reasoning, images, and whitespace-only text', () => {
