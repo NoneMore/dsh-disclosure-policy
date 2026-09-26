@@ -91,7 +91,7 @@ These sources explain the **communication policy** this plugin ports conceptuall
 
 **Community empirical evidence:** stale TODO update rates, specific UI pain points, steer delays under long blocking waits, and compatibility break reports. Treat these as environment/version observations rather than universal laws.
 
-**Plugin design choices/inferences:** `disclose_progress` as the reset primitive, its compact three-field schema, `reminderAfterCalls = 8`, `maxReminders = 3`, at most one reminder per model step, counting completed top-level ordinary calls, carrying same-step top-level sibling work across a successful checkpoint reset, coarse activity classification, turn-local state, and the absence of a standing prompt section are local policy choices. They are not DSH defaults. Section H lists the contracts the design retains and the evidence for each.
+**Plugin design choices/inferences:** `disclose_progress` as the reset primitive, its compact three-field schema, `reminderAfterCalls = 8`, exponential repeat backoff capped by `maxReminderIntervalCalls = 64`, no total reminder cap, at most one reminder per model step, counting completed top-level ordinary calls, carrying same-step top-level sibling work across a successful checkpoint reset, coarse activity classification, turn-local state, and the absence of a standing prompt section are local policy choices. They are not DSH defaults. Section H lists the contracts the design retains and the evidence for each.
 
 ## F. Codex interaction sources added in v0.2.1
 
