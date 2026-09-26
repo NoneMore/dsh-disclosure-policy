@@ -48,7 +48,8 @@ The plugin is **native-root-only**:
 
 - a top-level Agent whose effective tool presentation is exactly `native` receives `disclose_progress` plus cadence/activity listeners;
 - an Agent presenting `ptc` or `both` receives none of this plugin's model-facing or accounting surface;
-- a runtime child/subagent receives none of it, even when that child presents tools natively.
+- a runtime child/subagent receives none of it, even when that child presents tools natively;
+- a cold-resumed session marked as subagent lineage (`origin: subagent` or positive `delegationDepth`) also remains excluded even if it currently appears as a runtime root.
 
 Eligibility is sampled after Agent setup and before the first queued input is released. Hot reload also installs onto already-live eligible roots.
 
