@@ -65,10 +65,10 @@ export const Config: z<Config> = z.object({
 interface IntervalState {
   silence: SilenceState
   activity: ActivityState
-  currentStep: number | null
-  progressAttemptStep: number | null
-  checkpointStep: number | null
-  reminderDeliveredStep: number | null
+  step: number | null
+  pendingDisclosureStep: number | null
+  disclosedStep: number | null
+  remindedStep: number | null
 }
 
 const SOURCE = {
@@ -111,18 +111,19 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
         intervals.set(session, {
           silence: createSilence(),
           activity: createActivity(config.activityWindowSize),
-          currentStep: null,
-          progressAttemptStep: null,
-          checkpointStep: null,
-          reminderDeliveredStep: null,
+          step: null,
+          pendingDisclosureStep: null,
+          disclosedStep: null,
+          remindedStep: null,
         })
         return
       case 'assistant/message': {
         const interval = intervals.get(session)
         if (interval === undefined) return
-        interval.currentStep = event.data.step
-        interval.checkpointStep = null
-        interval.progressAttemptStep = event.data.message.content.some(block =>
+        interval.step = event.data.step
+        interval.remindedStep = interval.remindedStep === event.data.step ? interval.remindedStep : null
+        interval.disclosedStep = null
+        interval.pendingDisclosureStep = event.data.message.content.some(block =>
           block.type === 'tool-call' && block.name === DISCLOSURE_TOOL_NAME)
           ? event.data.step
           : null
@@ -154,8 +155,8 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
       const interval = exec.agent === undefined ? undefined : intervals.get(exec.agent.session)
       if (interval !== undefined) {
         resetSilence(interval.silence)
-        interval.checkpointStep = interval.currentStep
-        interval.progressAttemptStep = interval.currentStep
+        interval.disclosedStep = interval.step
+        interval.pendingDisclosureStep = interval.step
       }
       return null
     },
@@ -172,7 +173,7 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
     // A nested PTC call is not, so record the attempt here as well. Either way the
     // progress action itself is cadence/activity-neutral.
     if (exec.name === DISCLOSURE_TOOL_NAME) {
-      if (interval !== undefined) interval.progressAttemptStep = interval.currentStep
+      if (interval !== undefined) interval.pendingDisclosureStep = interval.step
       return next()
     }
 
@@ -182,7 +183,7 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
       // A successful checkpoint makes every later settlement from the same model
       // step part of the checkpoint boundary, regardless of parallel settlement
       // order. Charge only work from a later model step to the fresh interval.
-      if (interval.currentStep !== null && interval.checkpointStep === interval.currentStep) return null
+      if (interval.step !== null && interval.disclosedStep === interval.step) return null
       return countCompletedCall(interval.silence, config.reminderAfterCalls, config.maxReminders, {
         nested: exec.parent !== undefined,
       })
@@ -200,18 +201,18 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
     const index = observe()
     if (index === null) return downstream
 
-    const step = interval.currentStep
+    const step = interval.step
     // If this step is already trying to disclose, do not race it with a stale
     // reminder. Likewise, one model step can carry at most one reminder even if a
     // large parallel fan-out crosses several cadence periods.
     if (
       step !== null
-      && (interval.progressAttemptStep === step || interval.reminderDeliveredStep === step)
+      && (interval.pendingDisclosureStep === step || interval.remindedStep === step)
     ) return downstream
 
     const activityFact = inspectionActivityFact(interval.activity, config.inspectionHintMinInspections)
     markReminderDelivered(interval.silence, interval.silence.calls, index)
-    interval.reminderDeliveredStep = step
+    interval.remindedStep = step
     return withReminder(downstream, notice(reminderTextFor(index, activityFact)))
   })
 }
