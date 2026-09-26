@@ -214,6 +214,16 @@ test('the disclosure surface is installed only for exact native runtime roots', 
     assert.deepEqual(resumedSubagent.eventNames(), ['agent/created'])
   }
 
+  const forkedRoot = createHarness({
+    sessionHeader: { parentSession: 'fork-source', isSeeded: true, delegationDepth: 0 },
+  })
+  host.apply(forkedRoot.ctx)
+  assert.deepEqual(
+    [...forkedRoot.tools.keys()],
+    [DISCLOSURE_TOOL_NAME],
+    'ordinary fork lineage alone does not make a root a subagent',
+  )
+
   const futureRoot = createHarness({ root: false })
   host.apply(futureRoot.ctx)
   assert.deepEqual([...futureRoot.tools.keys()], [])
