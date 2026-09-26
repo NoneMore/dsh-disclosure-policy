@@ -74,10 +74,16 @@ interface IntervalState {
   continuationUsed: boolean
 }
 
-const SOURCE = {
+const REMINDER_SOURCE = {
   kind: 'disclosure-policy' as const,
   form: 'notice' as const,
   summary: 'Disclosure reminder',
+}
+
+const CONTINUATION_SOURCE = {
+  kind: 'disclosure-policy' as const,
+  form: 'notice' as const,
+  summary: 'Disclosure continuation',
 }
 
 const CONTINUE_AFTER_DISCLOSURE_TEXT = [
@@ -85,10 +91,10 @@ const CONTINUE_AFTER_DISCLOSURE_TEXT = [
   'Continue the stated next action now if it is executable. If the task is complete or blocked, respond normally instead; do not emit another disclosure merely to satisfy this notice.',
 ].join(' ')
 
-function notice(text: string): UserMessage {
+function notice(text: string, source = REMINDER_SOURCE): UserMessage {
   return createUserMessage({
     content: [{ type: 'text' as const, text }],
-    source: SOURCE,
+    source,
   })
 }
 
@@ -133,8 +139,12 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
       case 'assistant/message': {
         const interval = intervals.get(session)
         if (interval === undefined) return
+        // Any later model message proves that a previously standalone disclosure
+        // did not actually terminate the turn (for example, another plugin steered
+        // first), so a stale continuation candidate must not survive.
+        interval.standaloneDisclosureAfterReminder = false
         // Only complete structured model disclosure opens a new interval.
-        // Ordinary prose, reasoning, and plugin context never reset it.
+        // Ordinary prose, reasoning, and plugin context never reset accounting.
         if (isModelDisclosure(event.data.message)) {
           // A reminder-triggered disclosure that contains no tool call is the
           // exact shape that can accidentally terminate a long autonomous turn.
@@ -214,6 +224,6 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
 
     interval.continuationUsed = true
     interval.standaloneDisclosureAfterReminder = false
-    agent.steer(notice(CONTINUE_AFTER_DISCLOSURE_TEXT))
+    agent.steer(notice(CONTINUE_AFTER_DISCLOSURE_TEXT, CONTINUATION_SOURCE))
   })
 }
