@@ -172,6 +172,7 @@ test('a reminder-triggered standalone disclosure gets exactly one continuation s
   assert.equal(steered.length, 1)
   assert.equal(steered[0].role, 'user')
   assert.equal(steered[0].source.kind, 'disclosure-policy')
+  assert.equal(steered[0].source.summary, 'Disclosure continuation')
   assert.match(steered[0].content[0].text, /progress checkpoint, not a terminal response/)
   assert.match(steered[0].content[0].text, /Continue the stated next action now/)
   assert.equal((await harness.stop(session)).length, 0, 'the repair is bounded to one continuation per turn')
@@ -201,6 +202,25 @@ test('stop-boundary repair ignores ordinary disclosure and disclosure that alrea
     { type: 'tool-call', name: 'read' },
   ]))
   assert.equal((await withTool.stop(secondSession)).length, 0)
+})
+
+test('a later assistant step clears a stale standalone-disclosure stop candidate', { skip }, async () => {
+  const harness = createHarness()
+  const session = { id: 'session-external-continuation' }
+  host.apply(harness.ctx, { reminderAfterCalls: 1, maxReminders: 1, activityWindowSize: 0 })
+  harness.emit(session, TURN.start(1))
+  assertNoticeShape(await harness.postExecute(session), 0)
+  harness.emit(session, modelMessage([{
+    type: 'text',
+    text: 'Disclosure:\nDone: Checked the first file.\nNext: Inspect the second file.\nApproach: Read it directly.',
+  }]))
+
+  // Simulate some other source steering before the natural stop boundary.
+  harness.emit(session, modelMessage([
+    { type: 'text', text: 'Continuing after external steering.' },
+    { type: 'tool-call', name: 'read' },
+  ]))
+  assert.equal((await harness.stop(session)).length, 0)
 })
 
 test('the configured cadence yields a repeat reminder per period up to the budget', { skip }, async () => {
