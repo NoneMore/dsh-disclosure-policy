@@ -154,7 +154,10 @@ export function apply(ctx: Context, rawConfig: Config = {}): void {
       // result would duplicate context, so successful disclosure has no result text.
       render: () => [],
     },
-    async execute(_args, exec) {
+    async execute(args, exec) {
+      if (args.done.trim() === '' || args.next.trim() === '' || args.approach.trim() === '') {
+        throw new Error('disclose_progress: done, next, and approach must be non-empty')
+      }
       const interval = exec.agent === undefined ? undefined : intervals.get(exec.agent.session)
       if (interval !== undefined) {
         resetSilence(interval.silence)
