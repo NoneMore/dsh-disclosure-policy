@@ -32,15 +32,19 @@ export declare const Config: z<Config>;
 /**
  * `dsh-disclosure-policy` host plugin.
  *
- * Two extension points only:
+ * Three extension points:
  *
  * - `session/event` maintains one turn-local disclosure interval per session from
  *   first-party durable facts;
  * - `tools/post-execute` counts settled top-level calls and appends the due
- *   soft reminder as next-step context, at most `maxReminders` per interval.
+ *   soft reminder as next-step context, at most `maxReminders` per interval;
+ * - `agent/turn-stopping` repairs one narrow failure mode: after a delivered
+ *   reminder, a standalone structured disclosure must not accidentally become
+ *   the terminal response while executable work was meant to continue.
  *
- * The standing policy is a static prompt section. No guard is registered, no
- * task state is read or written, and nothing is steered from an event callback:
+ * The standing policy is a static prompt section. No guard is registered and no
+ * task state is read or written. Stop-boundary steering is bounded to one extra
+ * step per turn and only after a reminder-triggered standalone disclosure:
  * see ADR-0001 and ADR-0003. The runtime keeps live projections instead of
  * scanning session history, which current DSH policy requires for new code; a
  * hot reload mid-turn therefore starts accounting at the next `turn/start`.
