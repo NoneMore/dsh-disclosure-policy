@@ -1,13 +1,13 @@
 # DSH plugin + human-interaction practices
 
-Research snapshot: 2026-09-16. Detailed provenance lives in `SOURCES.md`. Current local policy (ADR-0005, 2026-09-26) recognizes complete structured disclosure rather than any visible text; historical v0.2/v0.3 descriptions below are version-specific.
+Research snapshot: 2026-09-16. Detailed provenance lives in `SOURCES.md`. Current local policy is ADR-0007 (2026-09-26): disclosure is the structured `disclose_progress` tool action; historical prose-based designs below are version-specific.
 
 ## 1. Separate three concerns
 
 A long-running coding agent has at least three different state/control lanes:
 
 1. **Plan/task accounting** — structured state such as DSH `todo_write`.
-2. **Progress narration** — concise visible Assistant text telling a human what materially changed and what is next.
+2. **Progress disclosure** — a concise structured model action telling a human what materially changed and what is next.
 3. **Control** — Queue, Steer, Ask/approval, Stop.
 
 Trying to make TODO state double as progress narration produces stale dashboards; trying to make narration double as control produces chatty but still uninterruptible runs. Keep the lanes separate and link them through runtime policy.
@@ -16,16 +16,16 @@ Trying to make TODO state double as progress narration produces stale dashboards
 
 Codex's public prompt uses meaningful work transitions rather than “every N tools” as the normal reason to report. That is the better interaction model. However, DSH community measurements show a model can ignore even explicit TODO instructions for dozens of calls. A practical DSH plugin should therefore combine:
 
-- a standing semantic obligation (“report important phase completion, discovery, plan change, test result, blocker, next action”);
+- one compact always-available progress primitive whose description carries the semantic obligation;
 - a soft N-call reminder.
 
 The numeric threshold is a safety net, not the desired cadence. v0.2 added a third stage — a hard checkpoint that denied the next tool call — and v0.3 removed it: enforcement corrects the model's style, while the actual failure is the supervisor's blindness, and a denial does not cure blindness (ADR-0001). v0.4 also replaced the one-shot reminder latch with a bounded cadence: a single ignored reminder left the rest of the interval silent, which is the one situation the reminder exists for. The safety net now repeats up to `maxReminders` times, and after that it still stops — repeating a nudge indefinitely is how a liveness check turns into noise (§9).
 
-## 3. Prefer native Assistant output over synthetic chat UI
+## 3. Use an explicit progress primitive when the host lacks phase semantics
 
-DSH already logs `assistant/message` and the Web UI treats earlier reply-bearing Assistant messages as process material inside the same Turn. Let the model use that channel. Plugin-generated context should request narration; it should not forge an Assistant message on the model's behalf.
+DSH can display reply-bearing Assistant material before the final answer, but visibility alone does not make that material non-terminal. A real session showed the model could emit a correct progress-only Assistant response and then legally end the Turn.
 
-This has useful consequences: provenance remains correct, the normal Turn folding logic works, and the human can steer in response to a real model statement.
+The current plugin therefore uses `disclose_progress({ done, next, approach })`. The model still authors the content, but progress is now an action inside the tool loop rather than prose whose lifecycle role must be inferred. Do not synthesize Assistant messages on the model's behalf.
 
 ## 4. Runtime observability should not depend on model compliance
 
@@ -46,22 +46,19 @@ no such surface; the counters it keeps are plugin-local.
 
 Current official guidance maps cleanly:
 
-- `session/event`: observe committed facts and maintain a live projection;
-- `ctx.tools.guard()`: final monotonic hard invariant — for plugins that actually own one, which this one does not;
+- `ctx.tools.register(defineTool(...))`: structured model action;
+- `session/event`: turn lifecycle and model-step identity;
 - `tools/post-execute.additionalContexts`: soft logged model-facing nudge;
-- `ctx.systemPrompt.section()`: standing behavioral obligation;
-- `agent/turn-stopping`: bounded objection before closing a Turn.
+- `ctx.tools.guard()`: final monotonic hard invariant — not used here;
+- `agent/turn-stopping`: bounded objection before close — not needed here.
 
-`dsh-disclosure-policy` uses the `session/event` projection, the `tools/post-execute` nudge, and the
-static prompt section, and nothing else.
+`dsh-disclosure-policy` uses the first three only. It installs no standing prompt section, no guard, and no stop steering.
 
 Do not poll deprecated Session history readers for live state.
 
 ## 6. Keep optional services optional
 
-Cordis `inject` is a hard dependency. If a plugin can operate without a capability, omit it from `inject` and probe with `ctx.get()`. This is why `dsh-disclosure-policy` requires `tools` but merely enhances behavior when `systemPrompt` is installed.
-
-Avoid ad-hoc “required/optional inject object” conventions unless the current framework documentation explicitly supports them.
+Cordis `inject` is a hard dependency. The current plugin requires only `tools`; it no longer depends on `systemPrompt`. Avoid ad-hoc “required/optional inject object” conventions unless the current framework documentation explicitly supports them.
 
 ## 7. Steering has lifecycle limits
 
@@ -94,9 +91,9 @@ A Turn ending only proves that the model stopped owing immediate work according 
 
 ## 11. PTC / Code Mode accounting
 
-Which calls to count is a policy choice, not a DSH fact. v0.2 counted nested native dispatches and exempted the outer `run_code` so one transport call could not hide a lot of work. v0.3 counts **top-level** calls only (`exec.parent === undefined`), because the silence measure is about how long the model has gone without speaking, and a single `run_code` that dispatches fifty tools is still one step of silence. Whichever rule a plugin picks, it must be explicit and tested: nested dispatches are distinguishable only through `ToolExecution.parent`.
+Which calls to count is a policy choice, not a DSH fact. The current cadence counts **top-level ordinary** calls only (`exec.parent === undefined`), while nested native calls still enrich the activity window.
 
-Human-interaction tools inside generated code have an additional risk: the code path must propagate the answer back to the model. Prefer top-level blocking questions for important decisions unless the PTC propagation path has been tested.
+`disclose_progress` is different: a nested PTC invocation is itself the checkpoint and resets the interval. A successful checkpoint makes the whole Assistant step the boundary, so settlement order between the nested call and its enclosing `run_code` cannot change cadence semantics.
 
 ## 12. Plugin compatibility practices
 
