@@ -59,7 +59,7 @@ Rules:
 - The reminder never resets the call count, so it keeps measuring the whole interval.
 - The notice is `createUserMessage` with `source: { kind: 'disclosure-policy', form: 'notice', summary }`, and it is prepended to whatever downstream post-execute decisions and contexts already exist.
 
-The reminder asks for one or two sentences covering the three questions above. The first reminder in an interval is the bare request; every later one appends one fixed sentence stating that this is a repeat reminder and that no visible disclosure has been sent in this stretch. It never states how many reminders remain, contains no runtime fact row, no threat of denial, no request for user input, and no chain-of-thought request.
+The reminder asks for one or two sentences covering the three questions above. Its base request is unchanged; an inspection-only interval can insert the objective activity fact described above, and every later reminder also appends one fixed sentence stating that this is a repeat reminder and that no visible disclosure has been sent in this stretch. It never states how many reminders remain, treats the activity fact as a progress judgment, threatens denial, requests user input, or asks for chain-of-thought.
 
 ## Mechanism mapping
 
@@ -67,7 +67,7 @@ The reminder asks for one or two sentences covering the three questions above. T
 |---|---|
 | Static disclosure policy | `systemPrompt.section({ order: 10150 })` |
 | Turn and visible-text observation | `session/event` live projection |
-| Count completed top-level calls and deliver the due reminder | `tools/post-execute` → `PostToolDecision.additionalContexts` |
+| Count silence/activity and deliver the due reminder | `tools/post-execute` → `PostToolDecision.additionalContexts` |
 
 ## Configuration
 

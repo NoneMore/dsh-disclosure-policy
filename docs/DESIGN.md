@@ -30,7 +30,7 @@ tools/post-execute .................. one reminder per cadence period,
                                      up to maxReminders per interval
 ```
 
-There is no second lane and no hard checkpoint. Native task accounting (`todo_write`) is a different concern owned by a different plugin; this one neither reads nor writes it.
+There is still one reminder lane and no hard checkpoint: activity is context on that lane, not an independent trigger or budget. Native task accounting (`todo_write`) is a different concern owned by a different plugin; this one neither reads nor writes it.
 ## Activity context: facts, not productivity judgments
 
 The runtime now keeps a second, ephemeral projection over the same visible-text interval: completed
